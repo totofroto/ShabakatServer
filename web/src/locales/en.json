@@ -1,0 +1,25 @@
+{
+  "commandCenter": "Command Center",
+  "registeredNodes": "Registered Nodes",
+  "linkPerformance": "Link Performance",
+  "engineStandby": "Engine Standby",
+  "engineActive": "Scanning Engine Active",
+  "tabs": {
+    "home": "Home",
+    "back": "Back",
+    "dnsStats": "DNS Stats",
+    "timelineLog": "Timeline Log"
+  },
+  "routerHook": "Open Router Login",
+  "addProvider": "Add Provider",
+  "providerPort": "Provider Port",
+  "enableAdGuard": "Enable AdGuard",
+  "adminAuthentication": "Admin Authentication",
+  "aboutSystem": "About System",
+  "profileName": "Tareg Shek",
+  "profilePartner": "Fatima-Samsmona Allaymona Waddan",
+  "profileOrigin": "Libya",
+  "profileLocation": "Datteln, Germany",
+  "launchPortal": "Launch Portal",
+  "profileCredentials": "Profile Credentials"
+}

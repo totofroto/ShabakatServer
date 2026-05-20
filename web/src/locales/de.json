@@ -1,0 +1,25 @@
+{
+  "commandCenter": "Kommandozentrale",
+  "registeredNodes": "Registrierte Knoten",
+  "linkPerformance": "Verbindungsleistung",
+  "engineStandby": "Triebwerk im Standby",
+  "engineActive": "Scanning Engine Aktiv",
+  "tabs": {
+    "home": "Home",
+    "back": "Zurück",
+    "dnsStats": "DNS-Statistik",
+    "timelineLog": "Zeitstrahl-Log"
+  },
+  "routerHook": "Router-Login öffnen",
+  "addProvider": "Provider hinzufügen",
+  "providerPort": "Provider-Port",
+  "enableAdGuard": "AdGuard aktivieren",
+  "adminAuthentication": "Admin-Authentifizierung",
+  "aboutSystem": "Über das System",
+  "profileName": "Tareg Shek",
+  "profilePartner": "Fatima-Samsmona Allaymona Waddan",
+  "profileOrigin": "Libyen",
+  "profileLocation": "Datteln, Deutschland",
+  "launchPortal": "Portal öffnen",
+  "profileCredentials": "Profil-Zugangsdaten"
+}

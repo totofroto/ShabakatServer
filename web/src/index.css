@@ -1,0 +1,183 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+:root {
+  /* ── Shabakat Design Tokens ── */
+
+  /* Surfaces */
+  --bg-void:          #000000;
+  --bg-surface:       #1C1C1E;
+  --bg-surface-alt:   #2C2C2E;
+  --bg-surface-hover: #3A3A3C;
+  --bg-separator:     #38383A;
+
+  /* Text hierarchy */
+  --text-primary:     #FFFFFF;
+  --text-secondary:   #8E8E93;
+  --text-tertiary:    #636366;
+
+  /* Accent — single brand blue */
+  --accent:           #0A84FF;
+  --accent-hover:     #409CFF;
+  --accent-muted:     rgba(10, 132, 255, 0.15);
+
+  /* Semantic status */
+  --status-online:    #30D158;
+  --status-warning:   #FF9F0A;
+  --status-error:     #FF453A;
+
+  /* Chart */
+  --chart-line:       #BFC0C4;
+  --chart-fill:       rgba(191, 192, 196, 0.15);
+  --chart-grid:       #2C2C2E;
+
+  /* Misc */
+  --border-subtle:    #38383A;
+  --pill-bg:          #2C2C2E;
+
+  /* ── shadcn compatibility (always dark — no light theme) ── */
+  --background:                 #000000;
+  --foreground:                 #FFFFFF;
+  --card:                       #1C1C1E;
+  --card-foreground:            #FFFFFF;
+  --popover:                    #1C1C1E;
+  --popover-foreground:         #FFFFFF;
+  --primary:                    #0A84FF;
+  --primary-foreground:         #FFFFFF;
+  --secondary:                  #2C2C2E;
+  --secondary-foreground:       #FFFFFF;
+  --muted:                      #2C2C2E;
+  --muted-foreground:           #8E8E93;
+  --destructive:                #FF453A;
+  --border:                     #38383A;
+  --input:                      #2C2C2E;
+  --ring:                       #0A84FF;
+  --radius:                     0.75rem;
+  --sidebar:                    #1C1C1E;
+  --sidebar-foreground:         #FFFFFF;
+  --sidebar-primary:            #0A84FF;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent:             #2C2C2E;
+  --sidebar-accent-foreground:  #FFFFFF;
+  --sidebar-border:             #38383A;
+  --sidebar-ring:               #0A84FF;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  background: var(--bg-void);
+  color: var(--text-primary);
+  color-scheme: dark;
+  padding: 0;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@theme inline {
+  --font-sans:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-heading: var(--font-sans);
+
+  /* ── Shabakat color tokens ── */
+  /* Surfaces */
+  --color-void:           var(--bg-void);
+  --color-surface:        var(--bg-surface);
+  --color-surface-alt:    var(--bg-surface-alt);
+  --color-surface-hover:  var(--bg-surface-hover);
+  --color-separator:      var(--bg-separator);
+
+  /* Accent */
+  --color-accent:         var(--accent);
+  --color-accent-hover:   var(--accent-hover);
+  --color-accent-muted:   var(--accent-muted);
+
+  /* Status */
+  --color-online:         var(--status-online);
+  --color-warning:        var(--status-warning);
+  --color-error:          var(--status-error);
+
+  /* Text — text-primary / text-secondary / text-tertiary */
+  --color-primary:        var(--text-primary);
+  --color-secondary:      var(--text-secondary);
+  --color-tertiary:       var(--text-tertiary);
+
+  /* ── shadcn compat ── */
+  --color-sidebar-ring:               var(--sidebar-ring);
+  --color-sidebar-border:             var(--sidebar-border);
+  --color-sidebar-accent-foreground:  var(--sidebar-accent-foreground);
+  --color-sidebar-accent:             var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary:            var(--sidebar-primary);
+  --color-sidebar-foreground:         var(--sidebar-foreground);
+  --color-sidebar:                    var(--sidebar);
+  --color-ring:                       var(--ring);
+  --color-input:                      var(--input);
+  --color-border:                     var(--border);
+  --color-destructive:                var(--destructive);
+  --color-muted-foreground:           var(--muted-foreground);
+  --color-muted:                      var(--muted);
+  --color-secondary-foreground:       var(--secondary-foreground);
+  --color-primary-foreground:         var(--primary-foreground);
+  --color-popover-foreground:         var(--popover-foreground);
+  --color-popover:                    var(--popover);
+  --color-card-foreground:            var(--card-foreground);
+  --color-card:                       var(--card);
+  --color-foreground:                 var(--foreground);
+  --color-background:                 var(--background);
+  --radius-sm:  calc(var(--radius) * 0.6);
+  --radius-md:  calc(var(--radius) * 0.8);
+  --radius-lg:  var(--radius);
+  --radius-xl:  calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-void text-primary;
+  }
+}
+
+/* ── Allowed animations (design system §7) ── */
+@layer utilities {
+  .pulse-live {
+    animation: pulse-subtle 2s ease-in-out infinite;
+  }
+  .scanning-indicator {
+    animation: spin 1s linear infinite;
+  }
+  .page-enter {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .page-enter-active {
+    opacity: 1;
+    transform: translateY(0);
+    transition: all 200ms ease-out;
+  }
+  .sheet-enter {
+    transform: translateY(100%);
+  }
+  .sheet-enter-active {
+    transform: translateY(0);
+    transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .row-active {
+    background: var(--bg-surface-hover);
+    transition: background 100ms;
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
