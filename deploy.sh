@@ -11,6 +11,10 @@ echo "Transferring configuration to WADDAN..."
 scp -o IdentitiesOnly=yes -o PreferredAuthentications=password docker-compose.yml totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
 scp -o IdentitiesOnly=yes -o PreferredAuthentications=password .env.example totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
 
+echo "Transferring debug toolkit..."
+scp -o IdentitiesOnly=yes -o PreferredAuthentications=password scripts/shabakat-debug.sh totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
+ssh -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'chmod +x /volume1/Docker/shabakat-server/shabakat-debug.sh'
+
 echo "Transferring image to WADDAN..."
 scp -o IdentitiesOnly=yes -o PreferredAuthentications=password /tmp/shabakat-server.tar.gz totofroto@192.168.254.18:/tmp/
 

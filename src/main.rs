@@ -33,6 +33,8 @@ async fn main() {
     env_logger::init();
     info!("[FLIGHT_RECORDER] Shabakat Server starting…");
 
+    api::debug::init_uptime();
+
     let config = Arc::new(Config::from_env());
 
     let db = storage::AppDb::new("./shabakat_server.db").await;
