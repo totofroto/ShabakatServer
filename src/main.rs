@@ -9,6 +9,7 @@ mod scheduler;
 mod storage;
 mod types;
 
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use log::info;
@@ -80,5 +81,10 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("bind failed");
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }
