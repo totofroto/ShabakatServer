@@ -22,7 +22,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
     },
     thread,
@@ -2136,6 +2136,12 @@ async fn scan_local_network_inner(
 ) -> Result<ScanNetworkResult, String> {
     info!("[SCAN_TRACE] scan_local_network_inner: entry");
 
+    if let Ok(ifaces) = get_if_addrs::get_if_addrs() {
+        for iface in ifaces {
+            info!("[SCAN_DEBUG] Available System Interface: name={}, addr={:?}", iface.name, iface.addr);
+        }
+    }
+
     tokio::task::spawn_blocking(init_vendor_map)
         .await
         .map_err(|join_err| format!("vendor map init panic: {join_err}"))??;
@@ -2300,11 +2306,19 @@ async fn scan_local_network_inner(
         mpsc::channel::<Option<(String, DiscoveredDevice, f64)>>(host_concurrency.max(32));
     let state_ping = Arc::clone(&state);
     let hosts_for_ping = scan_hosts.clone();
+    let probe_count = Arc::new(AtomicUsize::new(0));
     tokio::spawn(async move {
         stream::iter(hosts_for_ping)
             .map(|ip| {
                 let st = Arc::clone(&state_ping);
-                tokio::spawn(async move { probe_host(ip, st, profile).await })
+                let pc = Arc::clone(&probe_count);
+                tokio::spawn(async move {
+                    let count = pc.fetch_add(1, Ordering::SeqCst);
+                    if count < 3 {
+                        info!("[SCAN_DEBUG] Firing probe at target IP: {}", ip);
+                    }
+                    probe_host(ip, st, profile).await
+                })
             })
             .buffer_unordered(host_concurrency)
             .for_each(|row| {
@@ -2638,6 +2652,7 @@ async fn scan_local_network_inner(
         let g = state.lock().unwrap();
         build_scan_payload(&g)
     };
+    info!("[SCAN_DEBUG] Discovery phase concluded. Total raw objects found: {}", only_devices.len());
 
     if let Some(ref sd) = shared_devices {
         let mut d_lock = sd.lock().unwrap();
