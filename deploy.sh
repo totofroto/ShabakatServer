@@ -7,6 +7,10 @@ docker buildx build --platform linux/amd64 -t shabakat-server:latest .
 echo "Saving image to /tmp/shabakat-server.tar.gz..."
 docker save shabakat-server:latest | gzip > /tmp/shabakat-server.tar.gz
 
+echo "Transferring configuration to WADDAN..."
+scp -o IdentitiesOnly=yes -o PreferredAuthentications=password docker-compose.yml totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
+scp -o IdentitiesOnly=yes -o PreferredAuthentications=password .env.example totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
+
 echo "Transferring image to WADDAN..."
 scp -o IdentitiesOnly=yes -o PreferredAuthentications=password /tmp/shabakat-server.tar.gz totofroto@192.168.254.18:/tmp/
 
