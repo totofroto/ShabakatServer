@@ -150,8 +150,9 @@ The Tauri app's scanner code lives at:
 2. ☐ All scanner code stripped of Tauri/Android dependencies before compiling
 3. ☐ Every API endpoint returns proper JSON with error handling
 4. ☐ WebSocket events match Tauri event names/shapes for frontend compatibility
-5. ☐ Docker builds and runs with `--network host --cap-add=NET_RAW`
+5. ☐ Docker builds and runs with `--network host --cap-add=NET_RAW --cap-add=NET_ADMIN`
 6. ☐ SQLite schema migrations run automatically on startup
 7. ☐ All log lines use `[FLIGHT_RECORDER]` convention
 8. ☐ After changes: `cargo check`, `cargo build --release`, Docker build test
 9. ☐ After completing any feature, bug fix, or significant change — update HANDOFF.md: update the "Current State" section to reflect what now works, move completed items to done, and update "In Progress" with what is still pending.
+

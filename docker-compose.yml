@@ -12,8 +12,8 @@ services:
 
     # NET_RAW: allows real ICMP ping (not just TCP probe)
     cap_add:
-      - NET_RAW
       - NET_ADMIN
+      - NET_RAW
 
     env_file:
       - .env

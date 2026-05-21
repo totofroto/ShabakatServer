@@ -286,6 +286,7 @@ services:
     network_mode: host          # CRITICAL: raw LAN access for SSDP/mDNS/ARP
     cap_add:
       - NET_RAW                 # real ICMP ping
+      - NET_ADMIN               # network interface access / ARP
     environment:
       - SHABAKAT_SCAN_INTERVAL=600        # seconds between auto-scans (10 min)
       - SHABAKAT_HEARTBEAT_INTERVAL=120   # seconds between device heartbeats (2 min)
