@@ -1,0 +1,17 @@
+{
+  "general": {
+    "package": "shabakat",
+    "name": "Shabakat",
+    "version": "1.0.0",
+    "developer": "Tareg Shek",
+    "description": "Spatial network posture tracking and real-time security auditing tool.",
+    "architecture": "x86-64",
+    "hw-am": "x86-64"
+  },
+  "adm-desktop": {
+    "app": {
+      "desktop": 1,
+      "port": 7779
+    }
+  }
+}
