@@ -1170,9 +1170,12 @@ export function useNetworkScan() {
               setScannedHosts(event.payload.scannedHosts ?? 0);
               setTotalHosts(event.payload.totalHosts ?? 0);
               setProgressPct(100);
-              const payloadDevices = event.payload?.devices;
+              // Strict array guard — never allow a non-array (e.g. an error object)
+              // to reach any downstream .map/.slice caller.
+              const rawDevices = event.payload?.devices;
+              const payloadDevices: DiscoveredDevicePayload[] = Array.isArray(rawDevices) ? rawDevices : [];
               const { _map: historyMap, setDevices } = useDeviceStore.getState();
-              if (Array.isArray(payloadDevices) && payloadDevices.length > 0) {
+              if (payloadDevices.length > 0) {
                 const names = readCustomNamesFromStorage();
                 const rows = payloadDevices.map((p) => mapDiscoveredToRow(p, names));
                 const merged = mergeScanProgress(historyMap, rows);
@@ -1296,10 +1299,12 @@ export function useNetworkScan() {
       console.log("[SCAN_TRACE] Rust scan invoke resolved (streaming mode)");
       // Final sync: merge the full device list returned by the command so any
       // device_discovered events that were dropped or reordered are recovered.
-      const commandDevices = result?.devices;
+      // Strict array guard prevents a stale error object reaching .map/.slice callers.
+      const rawCommandDevices = result?.devices;
+      const commandDevices: DiscoveredDevicePayload[] = Array.isArray(rawCommandDevices) ? rawCommandDevices : [];
       {
         const { _map: historyMap, setDevices } = useDeviceStore.getState();
-        if (result && Array.isArray(commandDevices) && commandDevices.length > 0) {
+        if (commandDevices.length > 0) {
           const names = readCustomNamesFromStorage();
           const rows = commandDevices.map((p) => mapDiscoveredToRow(p, names));
           const merged = mergeScanProgress(historyMap, rows);
@@ -1357,7 +1362,11 @@ export function useNetworkScan() {
       evictLatencyCache();
       activeScanIdRef.current = null;
       scanInProgressRef.current = false;
+      // Always release ALL UI locks regardless of success, failure, or timeout.
+      // This guarantees the scan button, cancel button, and navigation are never
+      // permanently frozen by a backend error or a JS exception mid-scan.
       setIsScanning(false);
+      setProgressPct(0);
       console.log("[FLIGHT_RECORDER] UI Lock released.");
       unlistenScanStarted?.();
       unlistenScanFailed?.();

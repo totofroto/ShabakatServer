@@ -170,37 +170,58 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
   }
   if (command === "check_permission") return true as unknown as T;
 
-  // Scan: POST /api/scan, then wait for scan_finished on WebSocket
+  // Scan status — polled by ensureHistoryMapHydrated before loading devices.
+  if (command === "scan_status") return browserRequest<T>("/api/scan/status");
+
+  // Scan: POST /api/scan then wait for scan_finished OR scan_failed on WebSocket.
+  // scan_failed is emitted by the backend when the scan engine itself errors out;
+  // receiving it rejects the promise immediately instead of waiting 140 s for timeout.
   if (command === "scan_network") {
     const res = await browserRequest<any>("/api/scan", {
       method: "POST",
       body: JSON.stringify({ mode: args.mode ?? "silent" }),
     });
-    
-    // We still throw for the scan engine if it's a known conflict, 
-    // as useNetworkScan.ts expects to catch these specific strings.
-    if (res.error === "SCAN_IN_PROGRESS") throw new Error("SCAN_IN_PROGRESS");
-    if (res.error) throw new Error(res.error);
+
+    // Throw for known conflict/error payloads — useNetworkScan.ts catches these strings.
+    if (res?.error === "SCAN_IN_PROGRESS") throw new Error("SCAN_IN_PROGRESS");
+    if (res?.error) throw new Error(res.error as string);
 
     const { scanId } = res as { scanId: string };
 
     return new Promise<T>((resolve, reject) => {
+      const cleanup = () => {
+        window.clearTimeout(tid);
+        unlistenOk();
+        unlistenErr();
+      };
+
       const tid = window.setTimeout(() => {
-        unlisten();
+        cleanup();
         reject(new Error("Scan timed out."));
       }, 140_000);
-      const unlisten = wsListen<ScanFinishedData>("scan_finished", (data) => {
+
+      const unlistenOk = wsListen<ScanFinishedData>("scan_finished", (data) => {
         if (data.scanId !== scanId) return;
-        window.clearTimeout(tid);
-        unlisten();
+        cleanup();
         resolve({
-          devices: data.devices ?? [],
+          // Strict array guard — never allow an object to reach .slice/.map callers.
+          devices: Array.isArray(data.devices) ? data.devices : [],
           scanId: data.scanId,
           averageLatencyMs: data.averageLatencyMs ?? null,
           scannedHosts: data.scannedHosts ?? 0,
           totalHosts: 0,
         } as unknown as T);
       });
+
+      // Backend emits "scan_failed" when the scan engine errors (not just persistence).
+      const unlistenErr = wsListen<{ scanId: string; error?: string; reason?: string }>(
+        "scan_failed",
+        (data) => {
+          if (data.scanId !== scanId) return;
+          cleanup();
+          reject(new Error(data.error || data.reason || "Scan failed"));
+        },
+      );
     });
   }
 

@@ -11,15 +11,23 @@ pub async fn complete_scan_persistence(
 ) -> Result<Vec<(String, String, String, String)>, String> {
     let now = super::now_ms();
     let conn = db.connect_dedicated()?;
-    
-    conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
-    
+
+    // Set busy_timeout on this dedicated connection so WAL write conflicts
+    // wait up to 5 s instead of failing immediately with SQLITE_BUSY.
+    if let Err(e) = conn.execute("PRAGMA busy_timeout = 5000", ()).await {
+        log::warn!("[DB] busy_timeout pragma failed on dedicated conn (non-fatal): {e}");
+    }
+
+    conn.execute("BEGIN", ()).await.map_err(|e| {
+        log::error!("[DB] [FLIGHT_RECORDER] BEGIN transaction failed: {e}");
+        e.to_string()
+    })?;
+
     let mut new_devices = Vec::new();
-    
+
     for dev in &devices {
         match upsert_discovered_device(&conn, dev, now, network_id).await {
             Ok((device_id, is_new)) => {
-                // Record history
                 if let Err(e) = super::history::record_device_online(
                     &conn,
                     &scan_id,
@@ -29,12 +37,15 @@ pub async fn complete_scan_persistence(
                     dev.latency_ms,
                     network_id,
                 ).await {
+                    log::error!(
+                        "[DB] [FLIGHT_RECORDER] record_device_online failed for IP {} (device_id={device_id}): {e}",
+                        dev.ip
+                    );
                     let _ = conn.execute("ROLLBACK", ()).await;
                     return Err(format!("history record failed: {e}"));
                 }
 
                 if is_new {
-                    // Record event
                     if let Err(e) = super::history::record_new_device_event(
                         &conn,
                         device_id,
@@ -43,6 +54,10 @@ pub async fn complete_scan_persistence(
                         if dev.vendor.is_empty() { None } else { Some(&dev.vendor) },
                         now,
                     ).await {
+                        log::error!(
+                            "[DB] [FLIGHT_RECORDER] record_new_device_event failed for MAC {} IP {}: {e}",
+                            dev.mac, dev.ip
+                        );
                         let _ = conn.execute("ROLLBACK", ()).await;
                         return Err(format!("event record failed: {e}"));
                     }
@@ -56,21 +71,28 @@ pub async fn complete_scan_persistence(
                 }
             }
             Err(e) => {
+                log::error!(
+                    "[DB] [FLIGHT_RECORDER] upsert_discovered_device failed for MAC {} IP {}: {e}",
+                    dev.mac, dev.ip
+                );
                 let _ = conn.execute("ROLLBACK", ()).await;
                 return Err(format!("device upsert failed: {e}"));
             }
         }
     }
-    
-    // Mark offline
+
     let seen_macs: Vec<String> = devices.iter().map(|d| d.mac.clone()).collect();
     if let Err(e) = mark_offline_except(&conn, &seen_macs).await {
+        log::error!("[DB] [FLIGHT_RECORDER] mark_offline_except failed (seen_macs={}): {e}", seen_macs.len());
         let _ = conn.execute("ROLLBACK", ()).await;
         return Err(format!("mark offline failed: {e}"));
     }
-    
-    conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
-    
+
+    conn.execute("COMMIT", ()).await.map_err(|e| {
+        log::error!("[DB] [FLIGHT_RECORDER] COMMIT failed: {e}");
+        e.to_string()
+    })?;
+
     Ok(new_devices)
 }
 

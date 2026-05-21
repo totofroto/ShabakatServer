@@ -89,13 +89,14 @@ pub async fn trigger_scan(
             .await
         {
             Ok(result) => {
-                let devices = result.devices.clone();
-                log::info!("[SCAN] Scan finished. Found {} devices.", devices.len());
+                log::info!(
+                    "[FLIGHT_RECORDER] Scan finished. Found {} device(s). Broadcasting scan_finished immediately.",
+                    result.devices.len()
+                );
 
-                if let Err(e) = dev_store::complete_scan_persistence(db.clone(), devices, scan_id.clone(), network_id).await {
-                    log::error!("[SCAN] Persistence failed: {}", e);
-                }
-
+                // Broadcast scan_finished FIRST — the frontend releases its isScanning
+                // lock here. Never block this broadcast on a DB write; persistence
+                // failures must not freeze the UI.
                 let _ = broadcast_tx.send(json!({
                     "event": "scan_finished",
                     "data": {
@@ -106,10 +107,40 @@ pub async fn trigger_scan(
                         "averageLatencyMs": result.average_latency_ms,
                     }
                 }));
+
+                // Persist asynchronously — never block the broadcast above.
+                let db_persist = db.clone();
+                let devices_persist = result.devices.clone();
+                let scan_id_persist = scan_id.clone();
+                tokio::spawn(async move {
+                    match dev_store::complete_scan_persistence(
+                        db_persist,
+                        devices_persist,
+                        scan_id_persist,
+                        network_id,
+                    )
+                    .await
+                    {
+                        Ok(new_devices) => {
+                            log::info!(
+                                "[FLIGHT_RECORDER] DB persistence complete — {} new device(s) recorded.",
+                                new_devices.len()
+                            );
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "[FLIGHT_RECORDER] DB persistence failed (scan data unaffected, UI already unblocked): {}",
+                                e
+                            );
+                        }
+                    }
+                });
             }
             Err(e) => {
+                log::error!("[FLIGHT_RECORDER] Scan engine error: {}", e);
+                // Use "scan_failed" — matches the frontend's unlistenScanFailed handler.
                 let _ = broadcast_tx.send(json!({
-                    "event": "scan_error",
+                    "event": "scan_failed",
                     "data": { "scanId": scan_id, "error": e }
                 }));
             }
