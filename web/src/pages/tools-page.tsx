@@ -13,6 +13,7 @@ import {
   Network,
   Power,
   ScanSearch,
+  Terminal,
   Zap,
 } from "lucide-react";
 import { PingTool } from "@/components/tools/PingTool";
@@ -26,6 +27,7 @@ import { HttpHeaderTool } from "@/components/tools/HttpHeaderTool";
 import { TcpPingTool } from "@/components/tools/TcpPingTool";
 import { WhoisTool } from "@/components/tools/WhoisTool";
 import { SslTool } from "@/components/tools/SslTool";
+import { DebugSandbox } from "@/components/tools/DebugSandbox";
 
 type SpeedTestPayload = {
   pingMs: number;
@@ -158,7 +160,8 @@ type ToolId =
   | "whois"
   | "ssl"
   | "wol"
-  | "portscan";
+  | "portscan"
+  | "debug";
 
 const TOOLS: Array<{
   id: ToolId;
@@ -166,6 +169,7 @@ const TOOLS: Array<{
   icon: React.ComponentType<{ className?: string }>;
   Component: React.ComponentType;
 }> = [
+  { id: "debug",    label: "Debug Sandbox",      icon: Terminal,   Component: DebugSandbox },
   { id: "ping",     label: "Ping",               icon: Activity,   Component: PingTool },
   { id: "dns",      label: "DNS Lookup",          icon: Globe,      Component: DnsLookupTool },
   { id: "mac",      label: "MAC Lookup",          icon: Cpu,        Component: MacLookupTool },
