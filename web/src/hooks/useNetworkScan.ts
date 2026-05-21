@@ -105,7 +105,7 @@ if (import.meta.hot) {
 }
 
 export type DeviceStatus = "Online" | "Offline" | "Warning";
-export type ScanMode = "silent" | "aggressive";
+export type ScanMode = "silent" | "aggressive" | "deep";
 
 export type DeviceRow = {
   status: DeviceStatus;
@@ -759,6 +759,7 @@ const JS_SCAN_TIMEOUT_BY_MODE: Record<ScanMode, number> = {
   // Keep frontend timeout above Rust's 90s cap so backend completes first.
   silent: 140_000,
   aggressive: 120_000,
+  deep: 300_000,
 };
 const SCAN_RETRY_ATTEMPTS = 10;
 const SCAN_RETRY_DELAY_MS = 500;

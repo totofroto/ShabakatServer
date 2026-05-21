@@ -1,4 +1,5 @@
 pub mod arp;
+pub mod deep;
 pub mod fingerprints;
 pub mod network;
 pub mod network_identity;
@@ -84,14 +85,15 @@ pub struct ScanNetworkResult {
 pub enum ScanMode {
     Silent,
     Aggressive,
+    Deep,
 }
 
 impl ScanMode {
     pub fn from_str(input: &str) -> Self {
-        if input.eq_ignore_ascii_case("aggressive") {
-            ScanMode::Aggressive
-        } else {
-            ScanMode::Silent
+        match input.to_ascii_lowercase().as_str() {
+            "aggressive" => ScanMode::Aggressive,
+            "deep" => ScanMode::Deep,
+            _ => ScanMode::Silent,
         }
     }
 }
@@ -115,6 +117,11 @@ fn profile_for_mode(mode: ScanMode) -> ScanProfile {
             host_probe_timeout: Duration::from_millis(500),
             use_broadcast_nudge: true,
         },
+        ScanMode::Deep => ScanProfile {
+            host_concurrency: 200,
+            host_probe_timeout: Duration::from_millis(3000),
+            use_broadcast_nudge: true,
+        },
     }
 }
 
@@ -123,6 +130,7 @@ fn concurrency_for_subnet(mode: ScanMode, host_count: usize, base: usize) -> usi
         return match mode {
             ScanMode::Silent => 40,
             ScanMode::Aggressive => 100,
+            ScanMode::Deep => 150,
         };
     }
     base
@@ -2307,6 +2315,7 @@ async fn scan_local_network_inner(
         match mode {
             ScanMode::Silent => "silent",
             ScanMode::Aggressive => "aggressive",
+            ScanMode::Deep => "deep",
         },
     );
     let (ping_tx, mut ping_rx) =

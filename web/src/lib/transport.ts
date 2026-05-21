@@ -187,6 +187,8 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
     if (res?.error) throw new Error(res.error as string);
 
     const { scanId } = res as { scanId: string };
+    const mode = (args.mode as string) ?? "silent";
+    const timeoutMs = mode === "deep" ? 300_000 : 140_000;
 
     return new Promise<T>((resolve, reject) => {
       const cleanup = () => {
@@ -198,7 +200,7 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
       const tid = window.setTimeout(() => {
         cleanup();
         reject(new Error("Scan timed out."));
-      }, 140_000);
+      }, timeoutMs);
 
       const unlistenOk = wsListen<ScanFinishedData>("scan_finished", (data) => {
         if (data.scanId !== scanId) return;

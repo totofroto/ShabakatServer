@@ -12,48 +12,30 @@ pub fn init_uptime() {
 }
 
 pub async fn get_debug_state(State(state): State<AppState>) -> impl IntoResponse {
-    let uptime_secs = START_TIME.get().map(|t| t.elapsed().as_secs()).unwrap_or(0);
+    let _uptime_secs = START_TIME.get().map(|t| t.elapsed().as_secs()).unwrap_or(0);
     
     // Check DB status
-    let db_status = match state.db.connect_dedicated() {
-        Ok(_) => "connected",
-        Err(e) => {
-            log::error!("[DEBUG] DB connection check failed: {}", e);
-            "error"
-        }
-    };
+    let db_connected = state.db.connect_dedicated().is_ok();
 
     // Scanner state
     let is_scanning = scanner::is_scan_active();
 
-    // Memory footprint (basic)
-    let memory_usage = get_memory_usage();
+    // File descriptors (Linux only)
+    let open_fds = get_open_fds();
 
     Json(json!({
-        "database": {
-            "status": db_status,
-        },
-        "scanner": {
-            "is_active": is_scanning,
-        },
-        "system": {
-            "uptime_secs": uptime_secs,
-            "memory_bytes": memory_usage,
-        }
+        "is_scanner_active": is_scanning,
+        "db_connected": db_connected,
+        "open_fds": open_fds,
     }))
 }
 
-fn get_memory_usage() -> Option<u64> {
+fn get_open_fds() -> usize {
     #[cfg(target_os = "linux")]
     {
-        use std::fs;
-        if let Ok(statm) = fs::read_to_string("/proc/self/statm") {
-            let parts: Vec<&str> = statm.split_whitespace().collect();
-            if let Some(rss_pages) = parts.get(1).and_then(|p| p.parse::<u64>().ok()) {
-                // Return in bytes (usually 4KB per page on most Linux systems)
-                return Some(rss_pages * 4096);
-            }
+        if let Ok(entries) = std::fs::read_dir("/proc/self/fd") {
+            return entries.count();
         }
     }
-    None
+    0
 }

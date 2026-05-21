@@ -134,17 +134,8 @@ pub async fn portscan(Json(body): Json<PortscanReq>) -> impl IntoResponse {
         Ok(a) => a,
         Err(_) => return err500("invalid IP address").into_response(),
     };
-    let futs: Vec<_> = SCAN_PORTS.iter().map(|&port| {
-        let addr = std::net::SocketAddr::new(ip_addr, port);
-        async move {
-            match tokio::time::timeout(Duration::from_millis(500), tokio::net::TcpStream::connect(addr)).await {
-                Ok(Ok(_)) => Some(port),
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => Some(port),
-                _ => None,
-            }
-        }
-    }).collect();
-    let open_ports: Vec<u16> = futures::future::join_all(futs).await.into_iter().flatten().collect();
+    
+    let open_ports = crate::scanner::deep::scan_ports(ip_addr, SCAN_PORTS).await;
     Json(json!({ "openPorts": open_ports })).into_response()
 }
 
@@ -154,9 +145,6 @@ pub async fn portscan(Json(body): Json<PortscanReq>) -> impl IntoResponse {
 pub struct PortscanAllReq { pub ips: Vec<String> }
 
 pub async fn portscan_all(Json(body): Json<PortscanAllReq>) -> impl IntoResponse {
-    // We don't want to blast the network too hard, but NAS can handle some.
-    // We'll do them in small batches or just join_all with limited concurrency if we had a semaphore.
-    // For now, simple join_all but only 500ms timeout per port.
     let mut results = Vec::new();
     
     for ip in body.ips {
@@ -164,17 +152,8 @@ pub async fn portscan_all(Json(body): Json<PortscanAllReq>) -> impl IntoResponse
             Ok(a) => a,
             Err(_) => continue,
         };
-        let futs: Vec<_> = SCAN_PORTS.iter().map(|&port| {
-            let addr = std::net::SocketAddr::new(ip_addr, port);
-            async move {
-                match tokio::time::timeout(Duration::from_millis(300), tokio::net::TcpStream::connect(addr)).await {
-                    Ok(Ok(_)) => Some(port),
-                    Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => Some(port),
-                    _ => None,
-                }
-            }
-        }).collect();
-        let open_ports: Vec<u16> = futures::future::join_all(futs).await.into_iter().flatten().collect();
+        
+        let open_ports = crate::scanner::deep::scan_ports(ip_addr, SCAN_PORTS).await;
         results.push(json!({ "ip": ip, "openPorts": open_ports }));
     }
     
