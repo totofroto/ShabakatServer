@@ -27,16 +27,17 @@ pub async fn fallback_ipv4_network_via_udp() -> Result<LocalNetwork, String> {
         let ip = super::get_best_local_ip()
             .ok_or_else(|| "udp fallback: no local address".to_string())?;
 
-        let octets = ip.octets();
-        let prefix: u8 = match octets[0] {
-            10 => 22,
-            172 => 23,
-            _ => 24,
+        // Force strict fallback for headless NAS scanner: 192.168.254.0/24
+        let prefix = 24;
+        let ip = if ip.octets()[0] == 192 && ip.octets()[1] == 168 && ip.octets()[2] == 254 {
+            ip
+        } else {
+            Ipv4Addr::new(192, 168, 254, 18)
         };
 
         info!(
-            "scan: UDP fallback → {ip} (getifaddrs blocked); heuristic prefix /{prefix} for {}.x.x.x",
-            octets[0]
+            "scan: UDP fallback → {ip} (getifaddrs blocked); forcing strict 192.168.254.0/24 for headless NAS",
+            ip = ip
         );
 
         let cidr = Ipv4Net::new(ip, prefix).map_err(|e| format!("udp fallback cidr: {e}"))?;
