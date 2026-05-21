@@ -32,7 +32,7 @@ impl Config {
             google_client_secret: env::var("GOOGLE_CLIENT_SECRET").ok().filter(|s| !s.is_empty()),
             google_redirect_uri: env::var("GOOGLE_REDIRECT_URI").ok().filter(|s| !s.is_empty()),
             jwt_secret: env::var("JWT_SECRET").expect("CRITICAL ERROR: JWT_SECRET environment variable is missing! The server cannot start safely."),
-            disable_auth: env::var("SHABAKAT_DISABLE_AUTH").map(|v| v == "true").unwrap_or(false),
+            disable_auth: true, // DEBUG: hardcoded — remove before production deploy
             auth_bypass_local: env::var("SHABAKAT_AUTH_BYPASS_LOCAL").map(|v| v == "true").unwrap_or(false),
         }
     }

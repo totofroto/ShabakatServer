@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { transport } from "@/lib/transport";
 
 interface User {
   sub: string;
@@ -18,28 +17,16 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  // DEBUG: hardcoded debug user — remove before production deploy
+  const [user] = useState<User | null>({ sub: "debug", email: "debug@local", exp: 9999999999 });
+  const [loading] = useState(false);
 
   const refresh = async () => {
-    try {
-      const response = await transport.fetch("/api/auth/me");
-      if (response.ok) {
-        const data = await response.json();
-        setUser(data);
-      } else {
-        setUser(null);
-      }
-    } catch (error) {
-      console.error("Auth check failed:", error);
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
+    // DEBUG: no-op while auth is disabled
   };
 
   useEffect(() => {
-    refresh();
+    // DEBUG: skip API call while auth is disabled
   }, []);
 
   const login = () => {
@@ -47,13 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    try {
-      await transport.fetch("/api/auth/logout", { method: "POST" });
-      setUser(null);
-      window.location.href = "/login";
-    } catch (error) {
-      console.error("Logout failed:", error);
-    }
+    // DEBUG: no-op while auth is disabled
   };
 
   return (
