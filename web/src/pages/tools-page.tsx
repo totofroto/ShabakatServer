@@ -28,6 +28,7 @@ import { TcpPingTool } from "@/components/tools/TcpPingTool";
 import { WhoisTool } from "@/components/tools/WhoisTool";
 import { SslTool } from "@/components/tools/SslTool";
 import { DebugSandbox } from "@/components/tools/DebugSandbox";
+import { DevConsole } from "@/components/tools/DevConsole";
 
 type SpeedTestPayload = {
   pingMs: number;
@@ -161,7 +162,8 @@ type ToolId =
   | "ssl"
   | "wol"
   | "portscan"
-  | "debug";
+  | "debug"
+  | "console";
 
 const TOOLS: Array<{
   id: ToolId;
@@ -169,7 +171,8 @@ const TOOLS: Array<{
   icon: React.ComponentType<{ className?: string }>;
   Component: React.ComponentType;
 }> = [
-  { id: "debug",    label: "Debug Sandbox",      icon: Terminal,   Component: DebugSandbox },
+  { id: "console",  label: "Developer Console", icon: Terminal,   Component: DevConsole },
+  { id: "debug",    label: "Debug Sandbox",      icon: Cpu,        Component: DebugSandbox },
   { id: "ping",     label: "Ping",               icon: Activity,   Component: PingTool },
   { id: "dns",      label: "DNS Lookup",          icon: Globe,      Component: DnsLookupTool },
   { id: "mac",      label: "MAC Lookup",          icon: Cpu,        Component: MacLookupTool },

@@ -24,13 +24,39 @@ pub struct AppState {
     pub db: storage::AppDb,
     pub config: Arc<Config>,
     pub broadcast_tx: broadcast::Sender<serde_json::Value>,
+    pub log_tx: broadcast::Sender<String>,
     pub devices: Arc<Mutex<Vec<DiscoveredDevice>>>,
     pub bandwidth: Arc<Mutex<Option<crate::types::RouterBandwidth>>>,
 }
 
+struct BroadcastLogger {
+    tx: broadcast::Sender<String>,
+}
+
+impl log::Log for BroadcastLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            let log_line = format!("[{}] {}", record.level(), record.args());
+            let _ = self.tx.send(log_line.clone());
+            // Also print to console like env_logger would
+            eprintln!("{}", log_line);
+        }
+    }
+
+    fn flush(&self) {}
+}
+
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    let (log_tx, _) = broadcast::channel(1000);
+    let logger = BroadcastLogger { tx: log_tx.clone() };
+    log::set_boxed_logger(Box::new(logger)).unwrap();
+    log::set_max_level(log::LevelFilter::Info);
+
     info!("[FLIGHT_RECORDER] Shabakat Server starting…");
 
     api::debug::init_uptime();
@@ -46,6 +72,7 @@ async fn main() {
         db,
         config: Arc::clone(&config),
         broadcast_tx,
+        log_tx,
         devices: Arc::new(Mutex::new(Vec::new())),
         bandwidth: Arc::new(Mutex::new(None)),
     };
