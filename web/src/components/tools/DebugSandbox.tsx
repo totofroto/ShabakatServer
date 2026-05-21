@@ -31,10 +31,18 @@ export function DebugSandbox() {
           probe_type: probeType,
         }),
       });
+      
+      if (!res.ok) {
+        throw new Error(`Server error (${res.status}): ${res.statusText}`);
+      }
+      
       const data = await res.json();
       setResult(data);
     } catch (err) {
-      setResult({ online: false, raw_output: String(err) });
+      setResult({ 
+        online: false, 
+        raw_output: err instanceof Error ? err.message : String(err) 
+      });
     } finally {
       setLoading(false);
     }
