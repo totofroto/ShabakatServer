@@ -165,10 +165,11 @@ pub async fn google_callback(
     };
 
     // Set cookie
+    let is_secure = redirect_uri.starts_with("https");
     let cookie = Cookie::build(("admin_token", token))
         .path("/")
         .http_only(true)
-        .secure(true)
+        .secure(is_secure)
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .expires(time::OffsetDateTime::from_unix_timestamp(expiration.timestamp()).unwrap())
         .build();
