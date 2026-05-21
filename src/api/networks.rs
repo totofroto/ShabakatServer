@@ -20,14 +20,16 @@ pub async fn list_networks(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 pub async fn get_topology(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
-    };
-
-    let devices = match dev_store::list_devices(&conn, false).await {
-        Ok(d) => d,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+    // 1. Grab devices and drop connection immediately
+    let devices = {
+        let conn = match state.db.connect().await {
+            Ok(c) => c,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+        };
+        match dev_store::list_devices(&conn, false).await {
+            Ok(d) => d,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+        }
     };
 
     let info = scanner::network_identity::get_current_network_info().await;

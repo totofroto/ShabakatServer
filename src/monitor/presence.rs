@@ -1,127 +1,61 @@
-use std::time::{Duration, Instant};
-use log::{info, warn, debug, error};
-use mdns_sd::{ServiceDaemon, ServiceEvent, Receiver as MdnsReceiver};
-use std::collections::HashSet;
+use std::time::Duration;
+use log::{info, debug};
 use crate::storage::AppDb;
 use crate::scanner::arp;
 use crate::storage::now_ms;
 use libsql::params;
 
-const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
-
+/// Passive Presence Monitor
+/// 
+/// This monitor purely parses the system neighbor table (ARP cache) to update 
+/// device statuses. It never generates new network traffic or runs sweeps.
 pub async fn run_presence_monitor(db: AppDb) {
-    info!("[PRESENCE] Starting passive presence monitor...");
+    info!("[PRESENCE] Starting passive ARP presence monitor...");
     
-    let mdns = match ServiceDaemon::new() {
-        Ok(d) => d,
-        Err(e) => {
-            warn!("[PRESENCE] Failed to start mDNS daemon: {e}");
-            return;
-        }
-    };
-
-    let initial_services = [
-        "_googlecast._tcp.local.",
-        "_hap._tcp.local.",
-        "_printer._tcp.local.",
-        "_spotify-connect._tcp.local.",
-        "_smb._tcp.local.",
-        "_airplay._tcp.local.",
-        "_raop._tcp.local.",
-        "_workstation._tcp.local.",
-        "_ssh._tcp.local.",
-        "_http._tcp.local.",
-    ];
-
-    let mut receivers: Vec<MdnsReceiver<ServiceEvent>> = Vec::new();
-    for svc in initial_services {
-        if let Ok(rx) = mdns.browse(svc) {
-            receivers.push(rx);
-        }
-    }
-
-    let meta_rx = mdns.browse("_services._dns-sd._udp.local.").ok();
-    let mut dynamic_browsed: HashSet<String> = HashSet::new();
-    let mut seen_ips = HashSet::new();
-    
-    let mut last_flush = Instant::now();
+    let mut ticker = tokio::time::interval(Duration::from_secs(30));
 
     loop {
-        // Check for new service types
-        if let Some(ref meta) = meta_rx {
-            while let Ok(event) = meta.try_recv() {
-                if let ServiceEvent::ServiceFound(_type_name, fullname) = event {
-                    let svc_type = if fullname.ends_with('.') {
-                        fullname.clone()
-                    } else {
-                        format!("{fullname}.")
-                    };
-                    if !dynamic_browsed.contains(&svc_type) {
-                        dynamic_browsed.insert(svc_type.clone());
-                        if let Ok(rx) = mdns.browse(&svc_type) {
-                            debug!("[PRESENCE] Now browsing for {}", svc_type);
-                            receivers.push(rx);
-                        }
-                    }
-                }
+        ticker.tick().await;
+        debug!("[PRESENCE] Polling system neighbor table...");
+        
+        // Purely passive: read the system neighbor table
+        #[cfg(target_os = "linux")]
+        let neighbors = arp::parse_proc_arp();
+        
+        #[cfg(target_os = "macos")]
+        let neighbors = arp::dump_arp_table_macos().await;
+        
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let neighbors: Vec<(std::net::Ipv4Addr, String)> = Vec::new();
+
+        if neighbors.is_empty() {
+            debug!("[PRESENCE] No neighbors found in system table");
+            continue;
+        }
+
+        let db_clone = db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = update_devices_presence(db_clone, neighbors).await {
+                debug!("[PRESENCE] Passive update failed: {e}");
             }
-        }
-
-        // Check all service receivers
-        for rx in &receivers {
-            while let Ok(event) = rx.try_recv() {
-                if let ServiceEvent::ServiceResolved(info) = event {
-                    for addr in info.get_addresses() {
-                        if let std::net::IpAddr::V4(v4) = addr.to_ip_addr() {
-                            seen_ips.insert(v4.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Flush to DB
-        if last_flush.elapsed() >= FLUSH_INTERVAL && !seen_ips.is_empty() {
-            let ips: Vec<String> = seen_ips.drain().collect();
-            let db_clone = db.clone();
-            tokio::spawn(async move {
-                if let Err(e) = update_devices_presence(db_clone, ips).await {
-                    error!("[PRESENCE] DB update failed: {e}");
-                }
-            });
-            last_flush = Instant::now();
-        }
-
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        });
     }
 }
 
-async fn update_devices_presence(db: AppDb, ips: Vec<String>) -> Result<(), String> {
+async fn update_devices_presence(db: AppDb, neighbors: Vec<(std::net::Ipv4Addr, String)>) -> Result<(), String> {
     let now = now_ms();
     
-    // 1. Collect MAC addresses BEFORE acquiring DB connection
-    let mut presence_updates = Vec::new();
-    for ip in ips {
-        arp::nudge_neighbor(&ip);
-        if let Some(mac) = arp::lookup_mac(&ip).await {
-            presence_updates.push((ip, mac));
-        }
-    }
-    
-    if presence_updates.is_empty() {
-        return Ok(());
-    }
-
-    // 2. Perform DB updates in a focused transaction
+    // Perform DB updates in a focused transaction
     let conn = db.connect().await?;
     conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
     
-    for (ip, mac) in presence_updates {
+    for (ip, mac) in neighbors {
+        let ip_str = ip.to_string();
+        debug!("[PRESENCE] Device {} ({}) confirmed via ARP cache", mac, ip_str);
         let _ = conn.execute(
             "UPDATE devices SET last_seen = ?1, is_online = 1, last_ip = ?2 WHERE mac = ?3",
-            params![now, ip.clone(), mac.clone()],
+            params![now, ip_str, mac],
         ).await;
-        debug!("[PRESENCE] Device {} ({}) seen via mDNS", mac, ip);
     }
     
     conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
