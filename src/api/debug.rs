@@ -117,3 +117,12 @@ pub async fn debug_probe(Json(payload): Json<ProbeRequest>) -> impl IntoResponse
         }),
     }
 }
+
+pub async fn stream_logs() -> impl IntoResponse {
+    // Placeholder for live log streaming via SSE or WebSocket
+    // For now, just return a simple acknowledgment
+    Json(json!({
+        "status": "success",
+        "message": "Log streaming endpoint scaffolded. Real-time telemetry coming soon."
+    }))
+}

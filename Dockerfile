@@ -38,6 +38,7 @@ FROM debian:bookworm-slim
 # ca-certificates: needed for Telegram / webhook HTTPS calls (reqwest + rustls)
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=rust-builder /build/target/release/shabakat-server /usr/local/bin/shabakat-server

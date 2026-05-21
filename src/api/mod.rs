@@ -72,6 +72,7 @@ pub fn router(state: AppState) -> Router {
         .route("/router/bandwidth", get(dashboard::get_router_bandwidth))
         .route("/debug/state", get(debug::get_debug_state))
         .route("/debug/probe", post(debug::debug_probe))
+        .route("/debug/logs/stream", get(debug::stream_logs))
         .route("/devices", get(devices::list_devices))
         .route("/devices/alias", post(devices::set_device_alias))
         .route("/devices/:mac", get(devices::get_device))
