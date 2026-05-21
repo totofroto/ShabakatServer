@@ -1744,23 +1744,30 @@ async fn probe_host(
             .flatten()
     else {
         let ip_string = ip.to_string();
+        let mac_opt = get_mac_address(&ip_string).await;
         let mdns_identity =
             tokio::time::timeout(Duration::from_millis(350), unicast_mdns_query(&ip_string))
                 .await
                 .ok()
                 .flatten();
-        let mdns_label = mdns_identity?;
 
-        let mac = get_mac_address(&ip_string)
-            .await
-            .unwrap_or_else(|| "Unknown".to_string());
+        // If we have neither a MAC (ARP cache) nor an mDNS identity, the device is truly unreachable.
+        if mac_opt.is_none() && mdns_identity.is_none() {
+            return None;
+        }
+
+        let mac = mac_opt.unwrap_or_else(|| "Unknown".to_string());
         let vendor_name = vendor_name_from_mac(&mac);
-        log::info!("[SCAN] Stealth device found via mDNS: {} [{}] vendor={}", ip_string, mac, vendor_name);
         let vendor = vendor_name.clone();
-        let device_type = infer_device_type(&mdns_label, &vendor, None);
+        
+        let mdns_label = mdns_identity;
+        let label_for_infer = mdns_label.as_deref().unwrap_or(&vendor);
+        let device_type = infer_device_type(label_for_infer, &vendor, None);
         let resolved_name =
-            infer_device_name_with_type(&mdns_label, &vendor, &ip_string, &device_type);
+            infer_device_name_with_type(label_for_infer, &vendor, &ip_string, &device_type);
         let is_randomized = is_randomized_mac(&mac);
+
+        log::info!("[SCAN] Stealth device found via ARP/mDNS: {} [{}] vendor={}", ip_string, mac, vendor_name);
 
         return Some((
             ip_string.clone(),
@@ -1773,8 +1780,8 @@ async fn probe_host(
                 vendor_name,
                 device_type,
                 is_randomized,
-                mdns_hostname: Some(mdns_label),
-                mdns_primary_service: Some("mdns".to_string()),
+                mdns_hostname: mdns_label,
+                mdns_primary_service: Some("stealth".to_string()),
                 likely_type: None,
                 hostname: None,
                 ssdp_server: None,

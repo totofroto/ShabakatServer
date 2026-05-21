@@ -640,7 +640,8 @@ type ServerDevice = {
 
 async function browserLoadDevices(): Promise<DeviceRow[]> {
   try {
-    const rows = await invoke<ServerDevice[]>("get_devices");
+    const raw = await invoke<ServerDevice[]>("get_devices");
+    const rows = Array.isArray(raw) ? raw : [];
     console.log("[browserLoadDevices] raw server response:", rows.slice(0, 5));
     const names = readCustomNamesFromStorage();
     const mapped = rows
@@ -1153,88 +1154,85 @@ export function useNetworkScan() {
         unlistenScanFinished = await listen<ScanNetworkPayload>(
           "scan_finished",
           (event) => {
-            // Strict stale guard: activeScanIdRef is always set from scan_started before
-            // this fires, so any mismatch is definitively from a prior scan.
-            if (event.payload.scanId !== activeScanIdRef.current) {
-              staleFinishCountRef.current += 1;
-              console.warn("[STALE_FINISH]", {
-                activeScanId: activeScanIdRef.current,
-                incomingScanId: event.payload.scanId,
-              });
-              return;
+            try {
+              // Strict stale guard: activeScanIdRef is always set from scan_started before
+              // this fires, so any mismatch is definitively from a prior scan.
+              if (event.payload.scanId !== activeScanIdRef.current) {
+                staleFinishCountRef.current += 1;
+                console.warn("[STALE_FINISH]", {
+                  activeScanId: activeScanIdRef.current,
+                  incomingScanId: event.payload.scanId,
+                });
+                return;
+              }
+              console.log(`[SCAN_TRACE] scan_finished | scanId=${event.payload.scanId} | batches=${ipcBatchCountRef.current} | devices=${ipcDeviceCountRef.current}`);
+              setAverageLatencyMs(event.payload.averageLatencyMs ?? null);
+              setScannedHosts(event.payload.scannedHosts ?? 0);
+              setTotalHosts(event.payload.totalHosts ?? 0);
+              setProgressPct(100);
+              const payloadDevices = event.payload?.devices;
+              const { _map: historyMap, setDevices } = useDeviceStore.getState();
+              if (Array.isArray(payloadDevices) && payloadDevices.length > 0) {
+                const names = readCustomNamesFromStorage();
+                const rows = payloadDevices.map((p) => mapDiscoveredToRow(p, names));
+                const merged = mergeScanProgress(historyMap, rows);
+                notifyNewIntruderDevicesIfNeeded(merged.newIntruderNotifications);
+                setDevices(merged.devices);
+              } else {
+                setDevices(sortDevicesForDisplay(Array.from(historyMap.values())));
+              }
+            } catch (e) {
+              console.error("[SCAN_LIFECYCLE] Error in scan_finished handler:", e);
             }
-            console.log(`[SCAN_TRACE] scan_finished | scanId=${event.payload.scanId} | batches=${ipcBatchCountRef.current} | devices=${ipcDeviceCountRef.current}`);
-            setAverageLatencyMs(event.payload.averageLatencyMs ?? null);
-            setScannedHosts(event.payload.scannedHosts ?? 0);
-            setTotalHosts(event.payload.totalHosts ?? 0);
-            setProgressPct(100);
-            const payloadDevices = event.payload?.devices;
-            const { _map: historyMap, setDevices } = useDeviceStore.getState();
-            if (Array.isArray(payloadDevices) && payloadDevices.length > 0) {
-              const names = readCustomNamesFromStorage();
-              const rows = payloadDevices.map((p) => mapDiscoveredToRow(p, names));
-              const merged = mergeScanProgress(historyMap, rows);
-              notifyNewIntruderDevicesIfNeeded(merged.newIntruderNotifications);
-              setDevices(merged.devices);
-            } else {
-              setDevices(sortDevicesForDisplay(Array.from(historyMap.values())));
-            }
-            // Persistence is handled once in the post-invoke path; skip here to
-            // avoid a duplicate write racing the command-resolve save.
           },
         );
 
         unlistenDeviceDiscovered = await listen<ScanNetworkPayload>(
           "device_discovered",
           (event) => {
-            lastProgressEventAtRef.current = Date.now();
-            const payloadDevices = event.payload?.devices;
-            if (!Array.isArray(payloadDevices) || payloadDevices.length === 0) {
-              return;
-            }
+            try {
+              lastProgressEventAtRef.current = Date.now();
+              const payloadDevices = event.payload?.devices;
+              if (!Array.isArray(payloadDevices) || payloadDevices.length === 0) {
+                return;
+              }
 
-            // Strict stale guard: activeScanIdRef is set from scan_started, so any
-            // event with a different id is from a prior scan and must be rejected.
-            if (event.payload.scanId !== activeScanIdRef.current) {
-              staleBatchCountRef.current += 1;
-              console.warn("[STALE_BATCH]", {
-                activeScanId: activeScanIdRef.current,
-                incomingScanId: event.payload.scanId,
-              });
-              return;
-            }
+              // Strict stale guard: activeScanIdRef is set from scan_started, so any
+              // event with a different id is from a prior scan and must be rejected.
+              if (event.payload.scanId !== activeScanIdRef.current) {
+                staleBatchCountRef.current += 1;
+                console.warn("[STALE_BATCH]", {
+                  activeScanId: activeScanIdRef.current,
+                  incomingScanId: event.payload.scanId,
+                });
+                return;
+              }
 
-            // Reject duplicate or out-of-order batches from IPC replay / redelivery.
-            const seq = event.payload.batchSeq ?? 0;
-            if (seq > 0 && seq <= lastBatchSeqRef.current) {
-              console.warn("[STALE_BATCH_SEQ]", { batchSeq: seq, lastSeq: lastBatchSeqRef.current });
-              return;
-            }
-            lastBatchSeqRef.current = seq;
+              // Reject duplicate or out-of-order batches from IPC replay / redelivery.
+              const seq = event.payload.batchSeq ?? 0;
+              if (seq > 0 && seq <= lastBatchSeqRef.current) {
+                console.warn("[STALE_BATCH_SEQ]", { batchSeq: seq, lastSeq: lastBatchSeqRef.current });
+                return;
+              }
+              lastBatchSeqRef.current = seq;
 
-            ipcBatchCountRef.current += 1;
-            ipcDeviceCountRef.current += payloadDevices.length;
-            console.log(
-              `[FLIGHT_RECORDER] batch #${ipcBatchCountRef.current} seq=${event.payload.batchSeq ?? "?"} | ${payloadDevices.length} device(s) | total: ${ipcDeviceCountRef.current}`,
-            );
-            const first = payloadDevices[0];
-            if (first) {
+              ipcBatchCountRef.current += 1;
+              ipcDeviceCountRef.current += payloadDevices.length;
               console.log(
-                "[SCAN_TRACE_TYPE] React Received | IP:",
-                first.ip,
-                "likelyType:",
-                first.likelyType ?? "(null/undefined)",
+                `[FLIGHT_RECORDER] batch #${ipcBatchCountRef.current} seq=${event.payload.batchSeq ?? "?"} | ${payloadDevices.length} device(s) | total: ${ipcDeviceCountRef.current}`,
               );
+              const names = readCustomNamesFromStorage();
+              const rows = payloadDevices.map((p) => mapDiscoveredToRow(p, names));
+              setScannedHosts(event.payload.scannedHosts ?? 0);
+              setTotalHosts(event.payload.totalHosts ?? 0);
+              const { _map: historyMap, setDevices } = useDeviceStore.getState();
+              const merged = mergeScanProgress(historyMap, rows);
+              notifyNewIntruderDevicesIfNeeded(merged.newIntruderNotifications);
+              setDevices(merged.devices);
+              setProgressPct((prev) => Math.min(prev + 1, 96));
+            } catch (e) {
+              console.error("[SCAN_LIFECYCLE] Error in device_discovered handler:", e);
             }
-            const names = readCustomNamesFromStorage();
-            const rows = payloadDevices.map((p) => mapDiscoveredToRow(p, names));
-            setScannedHosts(event.payload.scannedHosts ?? 0);
-            setTotalHosts(event.payload.totalHosts ?? 0);
-            const { _map: historyMap, setDevices } = useDeviceStore.getState();
-            const merged = mergeScanProgress(historyMap, rows);
-            notifyNewIntruderDevicesIfNeeded(merged.newIntruderNotifications);
-            setDevices(merged.devices);
-            setProgressPct((prev) => Math.min(prev + 1, 96));
           },
         );
 
