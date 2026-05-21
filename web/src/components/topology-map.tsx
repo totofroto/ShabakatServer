@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Loader2, Server, Shield, Smartphone, Laptop, Tv, Router, Globe, Cpu, X, Info, Activity, Fingerprint } from "lucide-react";
 import * as d3 from "d3";
 
@@ -7,6 +7,8 @@ type TopologyNode = d3.SimulationNodeDatum & {
   label: string;
   ip: string | null;
   isGateway: boolean;
+  isServer?: boolean;
+  isAdGuard?: boolean;
   isOnline: boolean;
   likelyType: string | null;
   vendor: string | null;
@@ -22,13 +24,10 @@ type TopologyData = {
   edges: TopologyEdge[];
 };
 
-const WADDAN_IP = "192.168.254.18";
-const ADGUARD_IP = "192.168.254.36";
-
 function getIcon(node: TopologyNode) {
   if (node.isGateway) return <Router className="size-full" />;
-  if (node.ip === WADDAN_IP) return <Server className="size-full" />;
-  if (node.ip === ADGUARD_IP) return <Shield className="size-full" />;
+  if (node.isServer) return <Server className="size-full" />;
+  if (node.isAdGuard) return <Shield className="size-full" />;
   
   const type = node.likelyType?.toLowerCase() || "";
   if (type.includes("phone")) return <Smartphone className="size-full" />;
@@ -52,6 +51,16 @@ export function TopologyMap() {
   const [links, setLinks] = useState<TopologyEdge[]>([]);
   const [transform, setTransform] = useState(d3.zoomIdentity);
   const simulationRef = useRef<d3.Simulation<TopologyNode, TopologyEdge> | null>(null);
+
+  // Memoize starfield positions to avoid jitter on every render
+  const starfield = useMemo(() => {
+    return [...Array(30)].map(() => ({
+      width: Math.random() * 2 + 'px',
+      height: Math.random() * 2 + 'px',
+      top: Math.random() * 100 + '%',
+      left: Math.random() * 100 + '%',
+    }));
+  }, []);
 
   const fetchTopology = async () => {
     try {
@@ -205,16 +214,11 @@ export function TopologyMap() {
     >
       {/* Starfield background */}
       <div className="absolute inset-0 opacity-10 pointer-events-none">
-        {[...Array(30)].map((_, i) => (
+        {starfield.map((star, i) => (
           <div
             key={i}
             className="absolute rounded-full bg-white"
-            style={{
-              width: Math.random() * 2 + 'px',
-              height: Math.random() * 2 + 'px',
-              top: Math.random() * 100 + '%',
-              left: Math.random() * 100 + '%',
-            }}
+            style={star}
           />
         ))}
       </div>
@@ -258,14 +262,14 @@ export function TopologyMap() {
           {nodes.map((node) => {
             if (node.x === undefined || node.y === undefined) return null;
 
-            const isImportant = node.ip === WADDAN_IP || node.ip === ADGUARD_IP;
+            const isImportant = node.isGateway || node.isServer || node.isAdGuard;
             const isOnline = node.isOnline;
             const isSelected = selectedNode?.id === node.id;
             const color = node.isGateway 
               ? "#0A84FF" 
-              : node.ip === WADDAN_IP 
+              : node.isServer 
                 ? "#30D158" 
-                : node.ip === ADGUARD_IP 
+                : node.isAdGuard 
                   ? "#FF9F0A" 
                   : isOnline ? "#FFFFFF" : "#636366";
 
@@ -436,11 +440,11 @@ export function TopologyMap() {
         </div>
         <div className="flex items-center gap-1.5">
           <div className="size-1.5 rounded-full bg-[#30D158] shadow-[0_0_8px_#30D158]" />
-          <span className="text-[8px] font-bold uppercase tracking-widest text-secondary">NAS (WADDAN)</span>
+          <span className="text-[8px] font-bold uppercase tracking-widest text-secondary">NAS Node</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="size-1.5 rounded-full bg-[#FF9F0A] shadow-[0_0_8px_#FF9F0A]" />
-          <span className="text-[8px] font-bold uppercase tracking-widest text-secondary">AdGuard Pi</span>
+          <span className="text-[8px] font-bold uppercase tracking-widest text-secondary">Security Node</span>
         </div>
       </div>
     </div>

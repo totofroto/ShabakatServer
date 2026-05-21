@@ -25,11 +25,27 @@ use crate::middleware::auth::auth_middleware;
 use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin("http://192.168.254.18.nip.io:7779".parse::<HeaderValue>().unwrap())
+    let allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+        "http://192.168.254.18.nip.io:7779",
+    ];
+
+    let mut cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
         .allow_credentials(true);
+
+    for origin in allowed_origins {
+        if let Ok(hv) = origin.parse::<HeaderValue>() {
+            cors = cors.allow_origin(hv);
+        }
+    }
+
     let auth_routes = Router::new()
         .route("/google/login", get(auth::google_login))
         .route("/google/callback", get(auth::google_callback))

@@ -34,7 +34,6 @@ pub struct ScanNetworkPayload {
     pub devices: Vec<DiscoveredDevice>,
     pub average_latency_ms: Option<f64>,
     pub scanned_hosts: usize,
-    pub total_hosts: usize,
     pub scan_id: String,
     pub batch_seq: u32,
 }

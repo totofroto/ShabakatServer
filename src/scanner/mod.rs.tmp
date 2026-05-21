@@ -1,0 +1,83 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn oui_vendor_lookup_oracle_prefix() {
+        init_vendor_map().expect("mac-vendors.json");
+        let name = vendor_name_from_mac("00:00:17:aa:bb:cc");
+        assert!(
+            name.to_ascii_lowercase().contains("oracle"),
+            "expected Oracle for OUI 000017, got {name:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn arp_scanner_finds_at_least_three_devices() {
+        let has_network = network::local_ipv4_network().await.is_ok()
+            || network::fallback_ipv4_network_via_udp().await.is_ok();
+        if !has_network {
+            eprintln!(
+                "SKIP arp_scanner_finds_at_least_three_devices: \
+                 no local IPv4 network found — test requires LAN connectivity"
+            );
+            return;
+        }
+
+        let start = Instant::now();
+        // Since scan_local_network was removed, we use scan_local_network_pre_guarded with a guard
+        let guard = ScanGuard::try_acquire().expect("failed to acquire scan guard for test");
+        let result = scan_local_network_pre_guarded(None, None, guard, None, ScanMode::Silent, "test-scan".to_string())
+            .await
+            .expect("scan_local_network returned Err in test");
+        let elapsed = start.elapsed();
+
+        let test_budget = SCAN_LOCAL_NETWORK_TIMEOUT + Duration::from_secs(5);
+        assert!(
+            elapsed < test_budget,
+            "scan did not return within {test_budget:?} — possible hang: elapsed {elapsed:?}",
+        );
+
+        let found: Vec<String> = result
+            .devices
+            .iter()
+            .map(|d| format!("{} mac={} type={}", d.ip, d.mac, d.device_type))
+            .collect();
+
+        assert!(
+            result.devices.len() >= 3,
+            "ARP/ping scanner found {} device(s) — expected ≥ 3.\n\
+             Devices seen: {found:#?}",
+            result.devices.len(),
+        );
+
+        let arp_resolved = result
+            .devices
+            .iter()
+            .any(|d| d.mac != "Unknown" && d.mac != "MAC Restricted");
+
+        assert!(
+            arp_resolved,
+            "No device had a resolved MAC address.\nDevices seen: {found:#?}",
+        );
+
+        let oui_resolved = result.devices.iter().any(|d| {
+            d.mac != "Unknown"
+                && d.mac != "MAC Restricted"
+                && d.vendor_name != "Unknown"
+                && !d.vendor_name.is_empty()
+        });
+        assert!(
+            oui_resolved,
+            "No device received an OUI vendor_name.\nSample: {:?}",
+            result
+                .devices
+                .iter()
+                .filter(|d| d.mac != "Unknown" && d.mac != "MAC Restricted")
+                .take(5)
+                .map(|d| (&d.ip, &d.mac, &d.vendor_name))
+                .collect::<Vec<_>>()
+        );
+    }
+}

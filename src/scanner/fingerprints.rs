@@ -78,10 +78,8 @@ pub fn classify_from_http_artifacts(
     }
 
     // Home Assistant (UI often shows in title; port 8123 is handled in `identify_by_ports`)
-    if c.contains("home assistant") {
-        if out.likely.is_none() {
-            out.likely = Some("Home Assistant".to_string());
-        }
+    if c.contains("home assistant") && out.likely.is_none() {
+        out.likely = Some("Home Assistant".to_string());
     }
 
     // Big-appliance & networking brands in title or body

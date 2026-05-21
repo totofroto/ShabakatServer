@@ -3,17 +3,6 @@ use crate::storage::AppDb;
 use crate::types::{DiscoveredDevice, DeviceRecord};
 use libsql::{params, Connection, Row};
 
-/// Upsert a discovered device asynchronously.
-pub async fn upsert_device(
-    db: AppDb,
-    dev: DiscoveredDevice,
-    network_id: Option<i64>,
-) -> Result<(i64, bool), String> {
-    let now = super::now_ms();
-    let conn = db.connect_dedicated()?;
-    upsert_discovered_device(&conn, &dev, now, network_id).await
-}
-
 pub async fn complete_scan_persistence(
     db: AppDb,
     devices: Vec<DiscoveredDevice>,
@@ -83,12 +72,6 @@ pub async fn complete_scan_persistence(
     conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
     
     Ok(new_devices)
-}
-
-/// Get all active (online) devices asynchronously.
-pub async fn get_all_active_devices(db: AppDb) -> Result<Vec<DeviceRecord>, String> {
-    let conn = db.connect_dedicated()?;
-    list_devices(&conn, true).await
 }
 
 /// List all devices asynchronously, optionally filtering for online only.
@@ -340,40 +323,6 @@ pub async fn get_device_by_mac(conn: &Connection, mac: &str) -> Result<Option<De
     } else {
         Ok(None)
     }
-}
-
-pub async fn update_device(
-    conn: &Connection,
-    mac: &str,
-    custom_name: Option<Option<&str>>,
-    notes: Option<Option<&str>>,
-    acknowledged: Option<bool>,
-    custom_icon: Option<Option<&str>>,
-) -> Result<bool, String> {
-    let changed = conn
-        .execute(
-            "UPDATE devices SET
-                 custom_name  = CASE WHEN ?1 THEN ?2 ELSE custom_name  END,
-                 notes        = CASE WHEN ?3 THEN ?4 ELSE notes        END,
-                 acknowledged = CASE WHEN ?5 THEN ?6 ELSE acknowledged END,
-                 custom_icon  = CASE WHEN ?7 THEN ?8 ELSE custom_icon  END
-             WHERE mac = ?9",
-            params![
-                custom_name.is_some(),
-                custom_name.flatten(),
-                notes.is_some(),
-                notes.flatten(),
-                acknowledged.is_some(),
-                acknowledged.map(|b| b as i64),
-                custom_icon.is_some(),
-                custom_icon.flatten(),
-                mac,
-            ],
-        )
-        .await
-        .map_err(|e| format!("update device: {e}"))?;
-
-    Ok(changed == 1)
 }
 
 pub async fn delete_device(conn: &Connection, mac: &str) -> Result<bool, String> {

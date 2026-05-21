@@ -1,18 +1,20 @@
 use axum::{
     body::Body,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{Request, StatusCode},
     middleware::Next,
     response::Response,
 };
 use axum_extra::extract::cookie::CookieJar;
 use jsonwebtoken::{decode, DecodingKey, Validation};
+use std::net::SocketAddr;
 
 use crate::api::auth::Claims;
 use crate::AppState;
 
 pub async fn auth_middleware(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     jar: CookieJar,
     req: Request<Body>,
     next: Next,
@@ -35,19 +37,8 @@ pub async fn auth_middleware(
     }
 
     // Check for local bypass if enabled
-    if state.config.auth_bypass_local {
-        let is_local = req
-            .headers()
-            .get("X-Forwarded-For")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .or_else(|| req.headers().get("X-Real-IP").and_then(|v| v.to_str().ok()))
-            .map(|ip| is_local_ip(ip))
-            .unwrap_or(false);
-
-        if is_local {
-            return Ok(next.run(req).await);
-        }
+    if state.config.auth_bypass_local && is_local_ip(addr.ip()) {
+        return Ok(next.run(req).await);
     }
 
     // Check cookie or authorization header
@@ -68,7 +59,9 @@ pub async fn auth_middleware(
     };
 
     let decoding_key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
-    let validation = Validation::default();
+    let mut validation = Validation::default();
+    validation.set_issuer(&["shabakat-server"]);
+    validation.set_audience(&["shabakat-admin"]);
 
     match decode::<Claims>(&token, &decoding_key, &validation) {
         Ok(_) => Ok(next.run(req).await),
@@ -85,22 +78,13 @@ fn is_protected_route(path: &str) -> bool {
     true
 }
 
-fn is_local_ip(ip_str: &str) -> bool {
-    let ip_str = ip_str.trim();
-    if ip_str == "localhost" || ip_str == "127.0.0.1" || ip_str == "::1" {
-        return true;
-    }
-
-    if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
-        match ip {
-            std::net::IpAddr::V4(ipv4) => {
-                ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
-            }
-            std::net::IpAddr::V6(ipv6) => {
-                ipv6.is_loopback() || (ipv6.segments()[0] & 0xff00) == 0xfe00
-            }
+fn is_local_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
         }
-    } else {
-        false
+        std::net::IpAddr::V6(ipv6) => {
+            ipv6.is_loopback() || (ipv6.segments()[0] & 0xff00) == 0xfe00
+        }
     }
 }

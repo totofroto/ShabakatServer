@@ -3,7 +3,6 @@ pub mod fingerprints;
 pub mod network;
 pub mod network_identity;
 pub mod ping;
-pub mod ports;
 pub mod resolver;
 pub mod router_api;
 
@@ -16,14 +15,14 @@ pub use fingerprints::classify_from_hostname;
 pub use fingerprints::classify_from_vendor;
 pub use fingerprints::merge_port_and_http_likely;
 
-use log::{debug, info, warn};
-use crate::storage::{AppDb, devices as dev_store};
+use log::{info, warn};
+use crate::storage::AppDb;
 
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
     },
     thread,
@@ -34,7 +33,6 @@ use std::{
 
 static SCAN_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SCAN_CANCELLED: AtomicBool = AtomicBool::new(false);
-static MONITOR_SCAN_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub struct ScanGuard;
 
@@ -61,14 +59,6 @@ pub fn is_scan_active() -> bool {
     SCAN_ACTIVE.load(Ordering::Acquire)
 }
 
-pub fn request_scan_cancel() {
-    SCAN_CANCELLED.store(true, Ordering::Release);
-}
-
-pub fn reset_cancel_flag() {
-    SCAN_CANCELLED.store(false, Ordering::SeqCst);
-}
-
 fn scan_cancelled() -> bool {
     SCAN_CANCELLED.load(Ordering::Acquire)
 }
@@ -88,7 +78,6 @@ pub struct ScanNetworkResult {
     pub devices: Vec<DiscoveredDevice>,
     pub average_latency_ms: Option<f64>,
     pub scanned_hosts: usize,
-    pub total_hosts: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -189,8 +178,6 @@ fn persist_mdns_discovery(ip: &str, hostname: &str, tag: &str) {
 const PREFIX_LENGTHS: [usize; 3] = [9, 7, 6];
 
 const SCAN_LOCAL_NETWORK_TIMEOUT: Duration = Duration::from_secs(90);
-
-const PREFLIGHT_UDP_CHUNK: usize = 32;
 
 const PTR_QUERY_CONCURRENCY: usize = 32;
 
@@ -543,11 +530,10 @@ fn infer_device_name_with_type(
             }
             return "Computer".to_string();
         }
-        "iot" => {
-            if vendor != "Unknown" {
-                return format!("{vendor} Device");
-            }
+        "iot" if vendor != "Unknown" => {
+            return format!("{vendor} Device");
         }
+        "iot" => {}
         _ => {}
     }
 
@@ -1081,111 +1067,6 @@ async fn probe_http_identity(ip: &str, client: &reqwest::Client) -> Option<Strin
     }
 }
 
-pub(crate) struct EnrichedHttpProbe {
-    pub banner: Option<String>,
-    pub hints: fingerprints::HttpLayerHints,
-}
-
-async fn identity_from_response(
-    resp: reqwest::Response,
-    url: &str,
-    open_ports: &[u16],
-) -> Option<EnrichedHttpProbe> {
-    let status = resp.status();
-
-    let server_header = resp
-        .headers()
-        .get("server")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string());
-
-    let body = tokio::time::timeout(Duration::from_millis(700), resp.text())
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-
-    debug!("HTTP Probe Success [{}]: {:.100}", status, body.trim());
-
-    let title = extract_html_title(&body);
-    let mut banner: Option<String> = None;
-    if let Some(ref t) = title {
-        if is_useful_http_identity(t) {
-            debug!("HTTP Probe: extracted title = {:?}", t);
-            banner = Some(t.chars().take(80).collect());
-        }
-    }
-    if banner.is_none() {
-        if let Some(ref s) = server_header {
-            if is_useful_http_identity(s) {
-                debug!("HTTP Probe: using Server header = {:?}", s);
-                banner = Some(s.chars().take(80).collect());
-            }
-        }
-    }
-    if banner.is_none() {
-        debug!("HTTP Probe: no useful display banner for {}", url);
-    }
-
-    let body_prefix: String = body.chars().take(8_000).collect();
-    let hints = fingerprints::classify_from_http_artifacts(
-        server_header.as_deref(),
-        title.as_deref(),
-        &body_prefix,
-        open_ports,
-    );
-    Some(EnrichedHttpProbe { banner, hints })
-}
-
-pub(crate) async fn fetch_http_identity(
-    ip: &str,
-    port: u16,
-    open_ports: &[u16],
-) -> Option<EnrichedHttpProbe> {
-    let scheme = if port == 443 || port == 8443 {
-        "https"
-    } else {
-        "http"
-    };
-    let url = format!("{scheme}://{ip}:{port}/");
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(1500))
-        .connect_timeout(Duration::from_millis(800))
-        .danger_accept_invalid_certs(true)
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .build()
-        .ok()?;
-
-    info!("HTTP Probe: Attempting {}", url);
-
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(err) => {
-            warn!("HTTP Probe Error for {}: {}", url, err);
-            return None;
-        }
-    };
-
-    if scheme == "http" && resp.status().as_u16() >= 400 {
-        let https_url = format!("https://{ip}:{port}/");
-        info!(
-            "HTTP Probe: 400 Bad Request received. Falling back to HTTPS for {}",
-            https_url
-        );
-        if let Ok(https_resp) = client.get(&https_url).send().await {
-            return identity_from_response(https_resp, &https_url, open_ports).await;
-        }
-        warn!(
-            "HTTP Probe Error: HTTPS fallback also failed for {}",
-            https_url
-        );
-        return None;
-    }
-
-    identity_from_response(resp, &url, open_ports).await
-}
-
 fn build_mdns_device_info_query() -> Vec<u8> {
     let mut buf = vec![
         0x00, 0x00,
@@ -1278,14 +1159,12 @@ fn parse_mdns_identity_response(buf: &[u8]) -> Option<String> {
                     return Some(model);
                 }
             }
-            12 => {
-                if ptr_instance.is_none() {
-                    if let Some(full) = dns_read_name(buf, pos) {
-                        if let Some(label) = full.split('.').next() {
-                            let s = label.trim_start_matches('_').to_string();
-                            if s.len() > 2 {
-                                ptr_instance = Some(s);
-                            }
+            12 if ptr_instance.is_none() => {
+                if let Some(full) = dns_read_name(buf, pos) {
+                    if let Some(label) = full.split('.').next() {
+                        let s = label.trim_start_matches('_').to_string();
+                        if s.len() > 2 {
+                            ptr_instance = Some(s);
                         }
                     }
                 }
@@ -1774,7 +1653,7 @@ fn mdns_stub_device(ip: &str, info: &MdnsHostInfo) -> Option<DiscoveredDevice> {
 
 fn build_scan_payload(
     state: &ScanProgressState,
-) -> (Vec<DiscoveredDevice>, Option<f64>, usize, usize) {
+) -> (Vec<DiscoveredDevice>, Option<f64>, usize) {
     let mut devices: Vec<DiscoveredDevice> = state
         .ping
         .iter()
@@ -1828,7 +1707,6 @@ fn build_scan_payload(
         devices,
         average_latency_ms,
         state.scanned_hosts,
-        state.total_hosts,
     )
 }
 
@@ -1844,7 +1722,6 @@ fn emit_scan_progress(
         devices: snapshot.0,
         average_latency_ms: snapshot.1,
         scanned_hosts: snapshot.2,
-        total_hosts: snapshot.3,
         scan_id: String::new(),
         batch_seq: 0,
     };
@@ -1873,9 +1750,7 @@ async fn probe_host(
                 .await
                 .ok()
                 .flatten();
-        let Some(mdns_label) = mdns_identity else {
-            return None;
-        };
+        let mdns_label = mdns_identity?;
 
         let mac = get_mac_address(&ip_string)
             .await
@@ -2126,18 +2001,6 @@ async fn quick_http_server_header(ip: &str, port: u16) -> Option<String> {
         .map(|s| s.trim().chars().take(80).collect())
 }
 
-pub async fn scan_local_network(
-    db: Option<AppDb>,
-    shared_devices: Option<Arc<Mutex<Vec<DiscoveredDevice>>>>,
-    app: EventSink,
-) -> Result<ScanNetworkResult, String> {
-    let scan_id = format!(
-        "monitor-{}",
-        MONITOR_SCAN_COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    scan_local_network_with_mode(db, shared_devices, app, ScanMode::Silent, scan_id).await
-}
-
 async fn run_with_guard(
     db: Option<AppDb>,
     shared_devices: Option<Arc<Mutex<Vec<DiscoveredDevice>>>>,
@@ -2164,7 +2027,7 @@ async fn run_with_guard(
                 "scan_local_network: timed out after {:?} — returning partial results",
                 SCAN_LOCAL_NETWORK_TIMEOUT
             );
-            let (devices, average_latency_ms, scanned_hosts, total_hosts) = {
+            let (devices, average_latency_ms, scanned_hosts) = {
                 let g = state_for_timeout.lock().unwrap();
                 build_scan_payload(&g)
             };
@@ -2172,12 +2035,10 @@ async fn run_with_guard(
                 devices,
                 average_latency_ms,
                 scanned_hosts,
-                total_hosts,
             })
         }
     };
 
-    // Explicitly update Shared App State if we have a successful result (even if partial)
     if let Ok(ref result) = outcome {
         if let Some(ref sd) = shared_devices {
             let mut d_lock = sd.lock().unwrap();
@@ -2191,23 +2052,6 @@ async fn run_with_guard(
 
     drop(guard);
     outcome
-}
-
-pub async fn scan_local_network_with_mode(
-    db: Option<AppDb>,
-    shared_devices: Option<Arc<Mutex<Vec<DiscoveredDevice>>>>,
-    app: EventSink,
-    mode: ScanMode,
-    scan_id: String,
-) -> Result<ScanNetworkResult, String> {
-    let subnet = get_best_local_network().map(|(ip, prefix)| format!("{ip}/{prefix}"));
-    info!(
-        "[SYSTEM] Engine started for shabakat-server on subnet: {:?}",
-        subnet
-    );
-    let guard = ScanGuard::try_acquire().ok_or_else(|| "SCAN_IN_PROGRESS".to_string())?;
-    info!("[SCAN_LIFECYCLE] ScanGuard acquired | scan_id={scan_id}");
-    run_with_guard(db, shared_devices, guard, app, mode, scan_id).await
 }
 
 pub async fn scan_local_network_pre_guarded(
@@ -2227,7 +2071,6 @@ fn empty_scan_result() -> ScanNetworkResult {
         devices: Vec::new(),
         average_latency_ms: None,
         scanned_hosts: 0,
-        total_hosts: 0,
     }
 }
 
@@ -2285,7 +2128,7 @@ fn send_broadcast_nudge(local_network: &network::LocalNetwork) {
 }
 
 async fn scan_local_network_inner(
-    db: Option<AppDb>,
+    _db: Option<AppDb>,
     shared_devices: Option<Arc<Mutex<Vec<DiscoveredDevice>>>>,
     app: EventSink,
     state: Arc<Mutex<ScanProgressState>>,
@@ -2294,7 +2137,7 @@ async fn scan_local_network_inner(
 ) -> Result<ScanNetworkResult, String> {
     info!("[SCAN_TRACE] scan_local_network_inner: entry");
 
-    tokio::task::spawn_blocking(|| init_vendor_map())
+    tokio::task::spawn_blocking(init_vendor_map)
         .await
         .map_err(|join_err| format!("vendor map init panic: {join_err}"))??;
 
@@ -2459,7 +2302,7 @@ async fn scan_local_network_inner(
     let state_ping = Arc::clone(&state);
     let hosts_for_ping = scan_hosts.clone();
     tokio::spawn(async move {
-        stream::iter(hosts_for_ping.into_iter())
+        stream::iter(hosts_for_ping)
             .map(|ip| {
                 let st = Arc::clone(&state_ping);
                 tokio::spawn(async move { probe_host(ip, st, profile).await })
@@ -2481,9 +2324,8 @@ async fn scan_local_network_inner(
     const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(300);
     let mut device_batch: Vec<DiscoveredDevice> = Vec::with_capacity(BATCH_SIZE);
     let mut batch_scanned: usize = 0;
-    let mut batch_total: usize = 0;
-    let mut batch_last_flush = Instant::now();
     let mut batch_seq: u32 = 0;
+    let mut batch_last_flush = Instant::now();
 
     macro_rules! flush_batch {
         ($tx:expr) => {
@@ -2493,12 +2335,14 @@ async fn scan_local_network_inner(
                     devices: std::mem::take(&mut device_batch),
                     average_latency_ms: None,
                     scanned_hosts: batch_scanned,
-                    total_hosts: batch_total,
                     scan_id: scan_id.clone(),
                     batch_seq,
                 };
                 let _ = $tx.send(ScanEvent::DeviceDiscovered(payload));
-                batch_last_flush = Instant::now();
+                #[allow(unused_assignments)]
+                {
+                    batch_last_flush = Instant::now();
+                }
             }
         };
     }
@@ -2541,15 +2385,14 @@ async fn scan_local_network_inner(
                         );
                         let discovered_device = dev.clone();
 
-                        let (scanned_hosts, total_hosts) = {
+                        let scanned_hosts = {
                             let mut g = state.lock().unwrap();
                             g.scanned_hosts = g.scanned_hosts.saturating_add(1);
                             g.ping.insert(ip, (dev, lat));
-                            (g.scanned_hosts, g.total_hosts)
+                            g.scanned_hosts
                         };
 
                         batch_scanned = scanned_hosts;
-                        batch_total = total_hosts;
                         device_batch.push(discovered_device);
 
                         if device_batch.len() >= BATCH_SIZE
@@ -2561,13 +2404,12 @@ async fn scan_local_network_inner(
                         }
                     }
                     Some(None) => {
-                        let (scanned_hosts, total_hosts) = {
+                        let scanned_hosts = {
                             let mut g = state.lock().unwrap();
                             g.scanned_hosts = g.scanned_hosts.saturating_add(1);
-                            (g.scanned_hosts, g.total_hosts)
+                            g.scanned_hosts
                         };
                         batch_scanned = scanned_hosts;
-                        batch_total = total_hosts;
 
                         if batch_last_flush.elapsed() >= BATCH_FLUSH_INTERVAL {
                             if let Some(ref tx) = app {
@@ -2604,7 +2446,6 @@ async fn scan_local_network_inner(
             let self_ip = interface_ip;
             let subnet_cidr = local_network.cidr;
             let mut g = state.lock().unwrap();
-            let already_scanned_total = g.total_hosts;
 
             for (ip, mac) in arp_neighbors {
                 if ip == self_ip || !subnet_cidr.contains(&ip) {
@@ -2652,7 +2493,6 @@ async fn scan_local_network_inner(
                         devices: vec![dev],
                         average_latency_ms: None,
                         scanned_hosts: g.scanned_hosts,
-                        total_hosts: already_scanned_total,
                         scan_id: scan_id.clone(),
                         batch_seq,
                     };
@@ -2795,7 +2635,7 @@ async fn scan_local_network_inner(
         }
     }
 
-    let (only_devices, average_latency_ms, scanned_hosts, total_hosts) = {
+    let (only_devices, average_latency_ms, scanned_hosts) = {
         let g = state.lock().unwrap();
         build_scan_payload(&g)
     };
@@ -2811,46 +2651,12 @@ async fn scan_local_network_inner(
             "[FLIGHT_RECORDER] Scan completed with 0 devices on subnet: {}",
             local_network.cidr
         );
-    } else if let Some(app_db) = db {
-        info!("Attempting to save {} devices to database...", only_devices.len());
-        match app_db.connect_dedicated() {
-            Ok(conn) => {
-                let now = crate::storage::now_ms();
-                let mut count = 0;
-                let mut seen_macs = Vec::new();
-
-                for dev in &only_devices {
-                    if dev.mac == "Unknown" || dev.mac.is_empty() {
-                        continue;
-                    }
-                    seen_macs.push(dev.mac.clone());
-                    match dev_store::upsert_discovered_device(&conn, dev, now, None).await {
-                        Ok(_) => { count += 1; }
-                        Err(e) => {
-                            log::error!("[SCAN] DB upsert failed for {}: {}", dev.mac, e);
-                        }
-                    }
-                }
-
-                // Mark everything else offline
-                match dev_store::mark_offline_except(&conn, &seen_macs).await {
-                    Ok(n) => info!("Marked {} devices as offline.", n),
-                    Err(e) => log::error!("[SCAN] Failed to mark offline: {}", e),
-                }
-
-                info!("Successfully committed {} devices.", count);
-            }
-            Err(e) => {
-                log::error!("[SCAN] Dedicated DB connect failed: {}", e);
-            }
-        }
     }
 
     Ok(ScanNetworkResult {
         devices: only_devices,
         average_latency_ms,
         scanned_hosts,
-        total_hosts,
     })
 }
 
@@ -2882,7 +2688,9 @@ mod tests {
         }
 
         let start = Instant::now();
-        let result = scan_local_network(None, None, None)
+        // Since scan_local_network was removed, we use scan_local_network_pre_guarded with a guard
+        let guard = ScanGuard::try_acquire().expect("failed to acquire scan guard for test");
+        let result = scan_local_network_pre_guarded(None, None, guard, None, ScanMode::Silent, "test-scan".to_string())
             .await
             .expect("scan_local_network returned Err in test");
         let elapsed = start.elapsed();

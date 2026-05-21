@@ -99,14 +99,21 @@ pub async fn wake(Json(body): Json<WakeReq>) -> impl IntoResponse {
     if mac.len() != 12 {
         return err500("Invalid MAC address format").into_response();
     }
-    let bytes: Vec<u8> = (0..6)
+    let bytes: Vec<u8> = match (0..6)
         .map(|i| u8::from_str_radix(&mac[i * 2..i * 2 + 2], 16))
-        .collect::<Result<_, _>>()
-        .unwrap_or_default();
+        .collect::<Result<Vec<u8>, _>>() {
+            Ok(b) => b,
+            Err(_) => return err500("Invalid MAC address hex").into_response(),
+        };
+    
     if bytes.len() != 6 {
         return err500("Invalid MAC address hex").into_response();
     }
-    let arr: [u8; 6] = bytes.try_into().unwrap();
+    
+    let arr: [u8; 6] = match bytes.try_into() {
+        Ok(a) => a,
+        Err(_) => return err500("Failed to convert MAC bytes").into_response(),
+    };
     let pkt = wake_on_lan::MagicPacket::new(&arr);
     match pkt.send() {
         Ok(()) => Json(json!("Wake-on-LAN packet sent successfully.")).into_response(),
@@ -184,11 +191,7 @@ pub async fn subnet_calc(Json(body): Json<SubnetReq>) -> impl IntoResponse {
         Ok(n) => n,
         Err(e) => return err500(e).into_response(),
     };
-    let hosts: u64 = if net.prefix_len() >= 31 {
-        net.hosts().count() as u64
-    } else {
-        net.hosts().count() as u64
-    };
+    let hosts: u64 = net.hosts().count() as u64;
     Json(json!({
         "network":   net.network().to_string(),
         "broadcast": net.broadcast().to_string(),

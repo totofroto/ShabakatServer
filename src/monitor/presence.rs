@@ -98,24 +98,30 @@ pub async fn run_presence_monitor(db: AppDb) {
 
 async fn update_devices_presence(db: AppDb, ips: Vec<String>) -> Result<(), String> {
     let now = now_ms();
-    let conn = db.connect().await?;
     
+    // 1. Collect MAC addresses BEFORE acquiring DB connection
+    let mut presence_updates = Vec::new();
+    for ip in ips {
+        arp::nudge_neighbor(&ip);
+        if let Some(mac) = arp::lookup_mac(&ip).await {
+            presence_updates.push((ip, mac));
+        }
+    }
+    
+    if presence_updates.is_empty() {
+        return Ok(());
+    }
+
+    // 2. Perform DB updates in a focused transaction
+    let conn = db.connect().await?;
     conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
     
-    for ip in ips {
-        // Nudge to ensure it's in ARP table
-        arp::nudge_neighbor(&ip);
-        
-        // Wait a tiny bit for ARP to resolve if it was missing
-        // (In a passive monitor this is fine)
-        
-        if let Some(mac) = arp::lookup_mac(&ip).await {
-            let _ = conn.execute(
-                "UPDATE devices SET last_seen = ?1, is_online = 1, last_ip = ?2 WHERE mac = ?3",
-                params![now, ip.clone(), mac.clone()],
-            ).await;
-            debug!("[PRESENCE] Device {} ({}) seen via mDNS", mac, ip);
-        }
+    for (ip, mac) in presence_updates {
+        let _ = conn.execute(
+            "UPDATE devices SET last_seen = ?1, is_online = 1, last_ip = ?2 WHERE mac = ?3",
+            params![now, ip.clone(), mac.clone()],
+        ).await;
+        debug!("[PRESENCE] Device {} ({}) seen via mDNS", mac, ip);
     }
     
     conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;

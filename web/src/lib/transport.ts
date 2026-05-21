@@ -15,6 +15,8 @@ export type { UnlistenFn, EventCallback };
 // ── WebSocket singleton ───────────────────────────────────────────────────────
 
 let _ws: WebSocket | null = null;
+let _reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000;
 const _handlers = new Map<string, Array<(data: unknown) => void>>();
 
 /** Dispatch an event directly to local handlers (browser-mode simulation). */
@@ -35,9 +37,15 @@ function parsePingLatency(raw: string): number | null {
 }
 
 function ensureWs(): void {
-  if (_ws && _ws.readyState < WebSocket.CLOSING) return;
+  if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
+  
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  
+  ws.onopen = () => {
+    _reconnectAttempts = 0;
+  };
+
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data as string) as { event: string; data: unknown };
@@ -45,7 +53,18 @@ function ensureWs(): void {
       if (hs) for (const h of [...hs]) h(msg.data);
     } catch { /* ignore malformed */ }
   };
-  ws.onclose = () => { _ws = null; };
+
+  ws.onclose = () => {
+    _ws = null;
+    const delay = Math.min(1000 * Math.pow(2, _reconnectAttempts), MAX_RECONNECT_DELAY);
+    _reconnectAttempts++;
+    setTimeout(ensureWs, delay);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
   _ws = ws;
 }
 

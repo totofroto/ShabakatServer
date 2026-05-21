@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket};
+use std::net::{Ipv4Addr, IpAddr, SocketAddr, UdpSocket as StdUdpSocket};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -57,11 +57,6 @@ pub fn parse_proc_arp() -> Vec<(Ipv4Addr, String)> {
     }
 
     results
-}
-
-/// Not Android — always returns an empty list.
-pub async fn dump_all_neighbours() -> Vec<(Ipv4Addr, String)> {
-    Vec::new()
 }
 
 /// macOS: read the entire system ARP table via `arp -a` once.
@@ -125,16 +120,6 @@ fn normalize_macos_mac(raw: &str) -> Option<String> {
     ))
 }
 
-/// Always `false` — this is a Linux/macOS server, not Android.
-pub const fn is_android_target() -> bool {
-    false
-}
-
-/// No-op on server: neighbour MAC via the kernel table is not used outside Android.
-pub(crate) async fn neighbour_table_mac_for_ip(_ip: &str) -> Option<String> {
-    None
-}
-
 /// Neighbor nudge: dummy UDP to Discard (9) so the kernel resolves the MAC before neighbour lookup.
 pub fn nudge_neighbor(ip: &str) {
     if let Ok(socket) = StdUdpSocket::bind("0.0.0.0:0") {
@@ -145,14 +130,6 @@ pub fn nudge_neighbor(ip: &str) {
         let _ = socket.send_to(&[0], target);
     }
 }
-
-pub async fn nudge_neighbor_async(ip: Ipv4Addr) {
-    let ip = ip.to_string();
-    let _ = tokio::task::spawn_blocking(move || nudge_neighbor(&ip)).await;
-}
-
-/// No-op on server (was Android-only preflight).
-pub async fn preflight_udp_nudges(_hosts: &[Ipv4Addr]) {}
 
 /// Resolve MAC for `ip`.
 /// On Linux (Docker), read /proc/net/arp directly — no `arp` binary required.

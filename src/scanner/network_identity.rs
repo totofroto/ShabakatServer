@@ -48,7 +48,7 @@ pub async fn get_current_network_info() -> NetworkInfo {
     } else {
         gateway_ip
             .as_deref()
-            .and_then(|gw| super::arp::lookup_mac_proc(gw))
+            .and_then(super::arp::lookup_mac_proc)
     };
 
     let subnet = match iface.as_deref() {

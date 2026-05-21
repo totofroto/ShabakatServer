@@ -1,37 +1,6 @@
 use libsql::{params, Connection};
 use serde_json::{json, Value};
-use crate::storage::{AppDb, now_ms};
-
-pub async fn insert_scan_history(
-    db: AppDb,
-    scan_id: String,
-    device_id: i64,
-    ip: String,
-    is_online: bool,
-    latency_ms: Option<f64>,
-    open_ports: Option<String>,
-    network_id: Option<i64>,
-) -> Result<(), String> {
-    let now = now_ms();
-    let conn = db.connect().await?;
-    conn.execute(
-        "INSERT INTO scan_history (scan_id, scanned_at, device_id, ip, is_online, latency_ms, open_ports, network_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            scan_id,
-            now,
-            device_id,
-            ip,
-            if is_online { 1 } else { 0 },
-            latency_ms,
-            open_ports,
-            network_id
-        ],
-    )
-    .await
-    .map_err(|e| format!("insert scan history: {e}"))?;
-    Ok(())
-}
+use crate::storage::AppDb;
 
 pub async fn get_device_history(
     db: AppDb,
