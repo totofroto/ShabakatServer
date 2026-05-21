@@ -12,7 +12,7 @@ echo "🚀 Starting native Asustor package build for $TARGET..."
 
 # 1. Cross-compile Rust Backend
 echo "🦀 Compiling Rust backend for $TARGET..."
-cargo build --release --target "$TARGET"
+cargo zigbuild --release --target "$TARGET"
 
 # 2. Build React Frontend
 echo "⚛️ Building React frontend assets..."
