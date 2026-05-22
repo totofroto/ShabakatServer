@@ -37,10 +37,10 @@ mkdir -p "$BUILD_DIR/www"
 mkdir -p "$BUILD_DIR/CONTROL"
 
 # Copy binary
-if [ -f "target/$TARGET/release/shabakat-server" ]; then
-    cp "target/$TARGET/release/shabakat-server" "$BUILD_DIR/bin/"
+if [ -f "target/x86_64-unknown-linux-gnu/release/shabakat-server" ]; then
+    cp "target/x86_64-unknown-linux-gnu/release/shabakat-server" "$BUILD_DIR/bin/"
 else
-    echo "❌ Error: Binary target/$TARGET/release/shabakat-server not found!"
+    echo "❌ Error: Binary target/x86_64-unknown-linux-gnu/release/shabakat-server not found!"
     exit 1
 fi
 
