@@ -32,7 +32,10 @@ pub async fn run_speed_test(State(state): State<AppState>) -> impl IntoResponse 
             }))
             .into_response()
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        Err(e) => {
+            log::error!("[SPEED_TEST_FAILURE] Error during execution phase: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
+        }
     }
 }
 
