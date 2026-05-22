@@ -10,7 +10,11 @@ use serde_json::json;
 
 use crate::{storage, AppState};
 
-pub async fn run_speed_test(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn run_speed_test(
+    State(state): State<AppState>,
+    body_content: Option<String>
+) -> impl IntoResponse {
+    log::info!("[API_TRACE] Speed test invoked. Raw body received: {:?}", body_content);
     match do_speed_test().await {
         Ok((download_mbps, upload_mbps, ping_ms)) => {
             let now = storage::now_ms();
