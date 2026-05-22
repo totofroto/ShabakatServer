@@ -4,7 +4,11 @@
 
 set -e
 
-TARGET="x86_64-unknown-linux-gnu"
+# Cleanup old build artifacts
+echo "🧹 Cleaning up old build artifacts..."
+rm -rf target/apkg_build/ shabakat.tar.gz
+
+TARGET="x86_64-unknown-linux-gnu.2.17"
 APP_ID="shabakat"
 BUILD_DIR="target/apkg_build"
 
