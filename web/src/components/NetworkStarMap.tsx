@@ -21,6 +21,8 @@ const ZOOM_SENSITIVITY = 0.001;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type DeviceCategory = "routing" | "compute" | "mobile" | "iot" | "offline";
+
 type PhysicsNode = {
   id: string;
   label: string;
@@ -32,6 +34,8 @@ type PhysicsNode = {
   trustScore: number;
   lastSeen: number | null;
   isGateway: boolean;
+  category: DeviceCategory;
+  currentScale: number; // For magnification animation
 };
 
 export type NetworkStarMapProps = {
@@ -43,6 +47,35 @@ export type NetworkStarMapProps = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getDeviceCategory(d: DeviceRow, isGateway: boolean): DeviceCategory {
+  const isRecent = d.lastSeen && (Date.now() - d.lastSeen < 5 * 60 * 1000);
+  if (!isRecent && !d.isOnline) return "offline";
+  if (isGateway) return "routing";
+
+  const blob = [
+    d.likelyType,
+    d.deviceType,
+    d.name,
+    d.vendorName,
+    d.hostname,
+    d.mdnsPrimaryService,
+  ]
+    .map((s) => (s ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+
+  if (/(router|gateway|modem|fritz!|eero|orbi|unifi|mikrotik|netgate|gpon|fortinet|ont\b|broadband|xfinity|netgear|linksys|asus|nighthawk|access[\s-]?point|firewall|mesh|fiber|switch|hub)/.test(blob)) {
+    return "routing";
+  }
+  if (/(windows|linux|mac|nas|server|ubuntu|debian|synology|qnap|truenas|proxmox|workstation|desktop|laptop|macbook|macmini|imac)/.test(blob)) {
+    return "compute";
+  }
+  if (/(phone|tablet|iphone|ipad|android|mobile|galaxy|pixel)/.test(blob)) {
+    return "mobile";
+  }
+  return "iot";
+}
 
 function deviceLabel(d: DeviceRow): string {
   if (d.customName?.trim()) return d.customName.trim();
@@ -67,13 +100,15 @@ function detectGatewayIp(devices: DeviceRow[]): string | null {
 }
 
 /** Returns [node-colour, glow-colour] for canvas drawing. */
-function nodeColors(trustScore: number, lastSeen: number | null, isGateway: boolean): [string, string] {
-  if (isGateway) return ["#0A84FF", "#0055CC"];
-  const isRecent = lastSeen && (Date.now() - lastSeen < 5 * 60 * 1000);
-  if (!isRecent) return ["#636366", "#3A3A3C"];
-  if (trustScore >= 75) return ["#30D158", "#1A7A32"];
-  if (trustScore >= 50) return ["#0A84FF", "#0055CC"];
-  return ["#FF9F0A", "#B36F00"];
+function nodeColors(category: DeviceCategory): [string, string] {
+  switch (category) {
+    case "routing": return ["#0A84FF", "#0055CC"]; // Blue
+    case "compute": return ["#30D158", "#1A7A32"]; // Green
+    case "mobile":  return ["#FF9F0A", "#B36F00"]; // Amber
+    case "iot":     return ["#AF52DE", "#7D38A2"]; // Purple
+    case "offline": return ["#636366", "#3A3A3C"]; // Grey
+    default:        return ["#8E8E93", "#48484A"];
+  }
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -87,6 +122,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
   const tickRef      = useRef(0);
   const selectedIpRef = useRef<string | null>(selectedIp ?? null);
   const transformRef = useRef({ x: 0, y: 0, k: 1 });
+  const hoveredIdRef = useRef<string | null>(null);
   
   // Keep getTrustScore in a ref so the subscribe callback always uses the latest version
   // without needing to be in the effect's dependency array.
@@ -189,6 +225,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
         const trust     = getTrustScoreRef.current(d);
         const label     = deviceLabel(d);
         const existing  = nodes.get(d.ip);
+        const category  = getDeviceCategory(d, isGateway);
 
         if (existing) {
           existing.label      = label;
@@ -196,6 +233,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
           existing.lastSeen   = d.lastSeen ?? (d.isOnline ? Date.now() : null);
           existing.pinned     = isGateway;
           existing.isGateway  = isGateway;
+          existing.category   = category;
           if (isGateway) { existing.x = cx; existing.y = cy; }
         } else {
           const angle = (i / Math.max(devs.length, 1)) * Math.PI * 2;
@@ -211,6 +249,8 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
             trustScore: trust,
             lastSeen:   d.lastSeen ?? (d.isOnline ? Date.now() : null),
             isGateway,
+            category,
+            currentScale: 1.0,
           });
         }
       });
@@ -248,21 +288,40 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
       const gw    = all.find((n) => n.pinned) ?? null;
 
       // ── Physics ──────────────────────────────────────────────────────────
+      for (const n of all) {
+        // Animate scale for hover effect (35% enlargement)
+        const targetScale = hoveredIdRef.current === n.id ? 1.35 : 1.0;
+        n.currentScale += (targetScale - n.currentScale) * 0.15; // Smooth easing
+      }
+
       for (const n of free) {
         if (dragRef.current?.id === n.id) continue; // user is dragging this node
 
         let fx = 0, fy = 0;
 
-        // Node-node repulsion (O(n²) — fine for <60 nodes)
+        // Node-node repulsion + collision (O(n²) — fine for <60 nodes)
         for (const other of all) {
           if (other.id === n.id) continue;
           const dx = n.x - other.x;
           const dy = n.y - other.y;
-          const d2 = dx * dx + dy * dy + 0.01;
-          const d  = Math.sqrt(d2);
-          const f  = REPULSION / d2;
-          fx += (f * dx) / d;
-          fy += (f * dy) / d;
+          const distSq = dx * dx + dy * dy + 0.01;
+          const dist = Math.sqrt(distSq);
+          
+          const r1 = (n.isGateway ? GATEWAY_R : NODE_R) * n.currentScale;
+          const r2 = (other.isGateway ? GATEWAY_R : NODE_R) * other.currentScale;
+          const minDist = (r1 + r2) * 1.4; // padded collision radius
+
+          if (dist < minDist) {
+            // Collision force
+            const push = (minDist - dist) * 0.5;
+            fx += (push * dx) / dist;
+            fy += (push * dy) / dist;
+          } else {
+            // Standard repulsion
+            const f = REPULSION / distSq;
+            fx += (f * dx) / dist;
+            fy += (f * dy) / dist;
+          }
         }
 
         // Spring to gateway
@@ -319,14 +378,15 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
       // Gateway pulse ring
       if (gw) {
         const pulse = 0.35 + 0.12 * Math.sin(t * 1.8);
+        const r = GATEWAY_R * gw.currentScale;
         ctx.save();
         ctx.globalAlpha = pulse;
-        const ringGrad = ctx.createRadialGradient(gw.x, gw.y, GATEWAY_R, gw.x, gw.y, GATEWAY_R * 2.6);
+        const ringGrad = ctx.createRadialGradient(gw.x, gw.y, r, gw.x, gw.y, r * 2.6);
         ringGrad.addColorStop(0, "rgba(10,132,255,0.45)");
         ringGrad.addColorStop(1, "rgba(10,132,255,0)");
         ctx.fillStyle = ringGrad;
         ctx.beginPath();
-        ctx.arc(gw.x, gw.y, GATEWAY_R * 2.6, 0, Math.PI * 2);
+        ctx.arc(gw.x, gw.y, r * 2.6, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
@@ -334,7 +394,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
       // Edges (gateway → each device)
       if (gw) {
         for (const n of free) {
-          const isRecent = n.lastSeen && (Date.now() - n.lastSeen < 5 * 60 * 1000);
+          const isRecent = n.category !== "offline";
           ctx.save();
           ctx.globalAlpha = isRecent ? 0.35 : 0.12;
           ctx.strokeStyle = isRecent ? "#0A84FF" : "#636366";
@@ -352,9 +412,9 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
 
       // Device nodes
       for (const n of all) {
-        const r = n.isGateway ? GATEWAY_R : NODE_R;
-        const [nodeColor, glowColor] = nodeColors(n.trustScore, n.lastSeen, n.isGateway);
-        const isRecent = n.lastSeen && (Date.now() - n.lastSeen < 5 * 60 * 1000);
+        const r = (n.isGateway ? GATEWAY_R : NODE_R) * n.currentScale;
+        const [nodeColor, glowColor] = nodeColors(n.category);
+        const isRecent = n.category !== "offline";
         const pulse = isRecent && !n.isGateway
           ? 0.55 + 0.20 * Math.sin(t * 1.4 + n.x * 0.01)
           : 1;
@@ -457,7 +517,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
     let bestD = Infinity;
 
     for (const n of nodesRef.current.values()) {
-      const r  = n.isGateway ? GATEWAY_R : NODE_R;
+      const r  = (n.isGateway ? GATEWAY_R : NODE_R) * n.currentScale;
       const dx = n.x - logicalX;
       const dy = n.y - logicalY;
       const d  = Math.sqrt(dx * dx + dy * dy);
@@ -506,6 +566,9 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
   }, [hitTest]);
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
+    const node = hitTest(e.clientX, e.clientY);
+    hoveredIdRef.current = node?.id ?? null;
+
     const drag = dragRef.current;
     if (!drag) return;
     
@@ -524,7 +587,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
         node.vy = 0;
       }
     }
-  }, [screenToLogical]);
+  }, [hitTest, screenToLogical]);
 
   const onMouseUp = useCallback((e: React.MouseEvent) => {
     const drag = dragRef.current;
@@ -640,10 +703,10 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
       <div className="pointer-events-none absolute bottom-4 left-4 flex flex-col gap-1.5 rounded-xl border border-separator bg-surface/80 px-3 py-2.5">
         <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.25em] text-secondary">Legend</p>
         {[
-          { color: "#0A84FF", label: "Gateway / Router" },
-          { color: "#30D158", label: "Trust ≥ 75" },
-          { color: "#0A84FF", label: "Trust 50–74" },
-          { color: "#FF9F0A", label: "Trust < 50" },
+          { color: "#0A84FF", label: "Core Routing" },
+          { color: "#30D158", label: "Compute / NAS" },
+          { color: "#FF9F0A", label: "Mobile / Phones" },
+          { color: "#AF52DE", label: "Smart IoT" },
           { color: "#636366", label: "Offline" },
         ].map(({ color, label }) => (
           <span key={label} className="flex items-center gap-2">
@@ -654,7 +717,7 @@ export function NetworkStarMap({ getTrustScore, onDeviceClick, selectedIp }: Net
             <span className="font-mono text-[10px] text-secondary">{label}</span>
           </span>
         ))}
-        <p className="mt-1.5 text-[9px] text-tertiary">Drag nodes · Tap to inspect</p>
+        <p className="mt-1.5 text-[9px] text-tertiary">Hover to magnify · Drag nodes</p>
       </div>
     </div>
   );
