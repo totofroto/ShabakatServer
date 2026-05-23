@@ -46,10 +46,6 @@ export function IntruderAlertListener() {
   }, []);
 
   useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
-
     let unlisten: (() => void) | null = null;
     let cancelled = false;
 

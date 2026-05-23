@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@/lib/transport";
+import { invoke, isTauri, subscribeTelemetryEvents, type SystemTelemetry } from "@/lib/transport";
 import { listen } from "@/lib/transport";
 import {
   Activity,
@@ -165,9 +165,9 @@ function SpeedGaugeMini({
 }
 
 export function NetworkPerformanceSection() {
-  const { lang, dict } = useLanguage();
+  const { lang } = useLanguage();
   const t = (key: keyof typeof UI) => (UI[key] as any)[lang] || UI[key].en;
-  const { recordSpeedTestResult, isScanning } = useScanContext();
+  const { recordSpeedTestResult } = useScanContext();
   const [link, setLink] = useState<LinkStatsPayload | null>(null);
   const [linkErr, setLinkErr] = useState<string | null>(null);
   // Computed throughput in bytes/s (delta from consecutive raw counter reads).
@@ -205,19 +205,39 @@ export function NetworkPerformanceSection() {
     }
   }, []);
 
+  // 1. LAN Stats: Polling (Tauri) or WebSocket (Standalone)
   useEffect(() => {
-    if (!isTauri()) {
-      return;
+    if (isTauri()) {
+      void pollLink();
+      const id = window.setInterval(() => void pollLink(), 1000);
+      return () => window.clearInterval(id);
+    } else {
+      // Standalone mode: subscribe to live telemetry stream
+      console.log("[TRANSPORT] Subscribing to live telemetry stream...");
+      const unsubscribe = subscribeTelemetryEvents((event, data) => {
+        if (event === "system_telemetry") {
+          const telemetry = data as SystemTelemetry;
+          // Find the primary interface (excluding loopback)
+          const primary = telemetry.interfaces.find(i => i.interface !== "lo" && (i.bytesRxPerSec > 0 || i.bytesTxPerSec > 0)) 
+                          || telemetry.interfaces[0];
+          
+          if (primary) {
+            setRxRate(primary.bytesRxPerSec);
+            setTxRate(primary.bytesTxPerSec);
+            setLink({
+              interfaceName: primary.interface,
+              connectionType: "LAN",
+              liveRxBytes: 0, // Not used when rate is provided directly
+              liveTxBytes: 0,
+            });
+          }
+        }
+      });
+      return unsubscribe;
     }
-    void pollLink();
-    const id = window.setInterval(() => void pollLink(), 1000);
-    return () => window.clearInterval(id);
   }, [pollLink]);
 
   useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
     let isMounted = true;
     let unlisten: (() => void) | null = null;
     const setup = async () => {
@@ -239,9 +259,6 @@ export function NetworkPerformanceSection() {
   }, []);
 
   const runWan = async () => {
-    if (!isTauri()) {
-      return;
-    }
     setIsTesting(true);
     setWanError(null);
     setWanResult(null);
@@ -283,29 +300,7 @@ export function NetworkPerformanceSection() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!isTauri() ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest",
-                      isScanning
-                        ? "border-accent/25 bg-accent/10 text-accent"
-                        : "border-separator bg-surface-alt text-secondary",
-                    )}
-                  >
-                    <Activity
-                      className={cn("size-3", isScanning && "animate-pulse")}
-                      aria-hidden
-                    />
-                    {isScanning ? dict.engineActive : dict.engineStandby}
-                  </span>
-                </div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-tertiary italic opacity-60">
-                  Live traffic metrics are restricted to desktop sessions.
-                </p>
-              </div>
-            ) : linkErr ? (
+            {linkErr ? (
               <p className="text-sm text-error">{linkErr}</p>
             ) : link ? (
               <>

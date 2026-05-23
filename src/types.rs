@@ -111,3 +111,18 @@ pub struct RouterBandwidth {
     pub tx_bytes: u64,
     pub timestamp: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InterfaceMetrics {
+    pub interface: String,
+    pub bytes_rx_per_sec: u64,
+    pub bytes_tx_per_sec: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemTelemetry {
+    pub timestamp: i64,
+    pub interfaces: Vec<InterfaceMetrics>,
+}

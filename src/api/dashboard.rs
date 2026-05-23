@@ -28,3 +28,14 @@ pub async fn get_router_bandwidth(State(state): State<AppState>) -> Json<Value> 
         })),
     }
 }
+
+pub async fn get_system_telemetry(State(state): State<AppState>) -> Json<Value> {
+    let t = state.system_telemetry.lock().unwrap();
+    match *t {
+        Some(ref telemetry) => Json(json!(telemetry)),
+        None => Json(json!({
+            "timestamp": 0,
+            "interfaces": []
+        })),
+    }
+}

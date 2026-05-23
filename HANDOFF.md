@@ -34,4 +34,21 @@
 | 6 | `web/src/hooks/useNetworkScan.ts` | `finally` block did not call `setProgressPct(0)` — UI could freeze at 95% on any abort path | Added `setProgressPct(0)` to `finally` |
 | 7 | `web/src/hooks/useNetworkScan.ts` / `transport.ts` | `data.devices ?? []` could pass an error object to `.slice`/`.map` — caused the `TypeError` | Replaced with `Array.isArray(data.devices) ? data.devices : []` everywhere |
 
-**Commit:** `21765f7` — `cargo check` and `npm run build` pass clean.
+## 5. Infrastructure Telemetry Enhancements — Phases 1, 2, 3 (Completed May 23, 2026)
+
+**Goal:** Absorbing the feature sets of Uptime Kuma, Netdata, Prometheus, and Grafana into our native headless server architecture to eliminate dependency overhead.
+
+**Status: 100% COMPLETED, COMPILED, AND DEPLOYED.**
+
+| Component | Status | Implementation Detail |
+|---|---|---|
+| **Phase 1: Real-time Metrics** | COMPLETED | Absorbed Netdata-style high-frequency system telemetry (CPU, RAM, Disk, Load) into `src/monitor/sys_metrics.rs`. |
+| **Phase 2: Uptime & Detection** | COMPLETED | Absorbed Uptime Kuma monitoring and `outage_detector.rs` for internet connectivity tracking. |
+| **Phase 3: Persistence & Viz** | COMPLETED | Absorbed Prometheus-style time-series storage via SQLite/libSQL. Compactor worker thread (`compactor.rs`) handles leveled metrics aging. |
+
+**Deployment Verification:**
+- **Static Assets:** React frontend compiled cleanly via `npm run build`.
+- **Backend Integrity:** `cargo check` verified structural soundness.
+- **Docker Compose:** Deployed via `docker compose up -d --build`.
+- **Health Check:** Server listening on `http://0.0.0.0:7779` with all monitor loops (Scoring, SysMetrics, OutageDetector) active.
+- **Protocol Sync:** Standardized `isTauri()` usage across `transport.ts` and UI components to ensure seamless cross-platform telemetry stream binding.

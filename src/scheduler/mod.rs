@@ -111,6 +111,20 @@ pub async fn run(state: AppState) {
 
                 match dev_store::complete_scan_persistence(db.clone(), devices.clone(), scan_id.clone(), network_id).await {
                     Ok(new_devices) => {
+                        // Broadcast live intruder alerts for the UI
+                        let timestamp = storage::now_ms();
+                        for (name, _vendor, ip, mac) in &new_devices {
+                            let _ = bcast.send(json!({
+                                "type": "new-device",
+                                "payload": {
+                                    "timestampMs": timestamp,
+                                    "mac": mac,
+                                    "name": name,
+                                    "ip": ip,
+                                }
+                            }));
+                        }
+
                         // Send Telegram alerts for newly discovered devices.
                         if let (Some(tok), Some(cid)) = (
                             &state.config.telegram_bot_token,

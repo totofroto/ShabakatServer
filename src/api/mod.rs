@@ -69,6 +69,7 @@ pub fn router(state: AppState) -> Router {
 
     let api = Router::new()
         .route("/system-status", get(dashboard::get_system_status))
+        .route("/system/telemetry", get(dashboard::get_system_telemetry))
         .route("/router/bandwidth", get(dashboard::get_router_bandwidth))
         .route("/debug/state", get(debug::get_debug_state))
         .route("/debug/probe", post(debug::debug_probe))

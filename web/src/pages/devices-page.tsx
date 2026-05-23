@@ -1094,7 +1094,7 @@ export function DevicesPage() {
   }, [devices, selectedIp]);
 
   useEffect(() => {
-    if (!selectedDevice || selectedDevice.status !== "Online" || !isTauri()) {
+    if (!selectedDevice || selectedDevice.status !== "Online") {
       setPingSamples([]);
       return;
     }
@@ -1131,7 +1131,7 @@ export function DevicesPage() {
   }, [selectedDevice?.ip, selectedDevice?.status]);
 
   useEffect(() => {
-    if (!selectedDevice || selectedDevice.status !== "Online" || !isTauri()) {
+    if (!selectedDevice || selectedDevice.status !== "Online") {
       setForensicAutoScanning(false);
       return;
     }

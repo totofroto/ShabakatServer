@@ -3,6 +3,14 @@ use crate::storage::AppDb;
 use crate::types::{DiscoveredDevice, DeviceRecord};
 use libsql::{params, Connection, Row};
 
+pub struct DeviceStorage;
+
+impl DeviceStorage {
+    pub async fn get_all_devices(db: &AppDb) -> Result<Vec<DeviceRecord>, String> {
+        list_devices_async(db.clone(), false).await
+    }
+}
+
 pub async fn complete_scan_persistence(
     db: AppDb,
     devices: Vec<DiscoveredDevice>,

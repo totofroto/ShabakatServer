@@ -4,13 +4,37 @@
  */
 import {
   invoke as tauriInvoke,
-  isTauri as tauriIsTauri,
 } from "@tauri-apps/api/core";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
-export { tauriIsTauri as isTauri };
+// Detect runtime profile (Tauri App Context vs Standalone Browser Container Mode)
+export const isTauri = () => typeof window !== 'undefined' && '__TAURI__' in window;
+
 export type { UnlistenFn, EventCallback };
+
+// ── Telemetry Interfaces ──────────────────────────────────────────────────────
+
+export interface InterfaceMetrics {
+  interface: string;
+  bytesRxPerSec: number;
+  bytesTxPerSec: number;
+}
+
+export interface SystemTelemetry {
+  timestamp: number;
+  interfaces: InterfaceMetrics[];
+}
+
+export interface LatencyUpdate {
+  mac: string;
+  ip: string;
+  isOnline: boolean;
+  latencyMs: number | null;
+  timestamp: number;
+}
+
+type TelemetryHandler = (event: string, data: any) => void;
 
 // ── WebSocket singleton ───────────────────────────────────────────────────────
 
@@ -18,9 +42,14 @@ let _ws: WebSocket | null = null;
 let _reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 30000;
 const _handlers = new Map<string, Array<(data: unknown) => void>>();
+const _wildcardHandlers: Array<TelemetryHandler> = [];
 
 /** Dispatch an event directly to local handlers (browser-mode simulation). */
 function localDispatch(event: string, data: unknown): void {
+  // 1. Dispatch to wildcard handlers
+  for (const h of _wildcardHandlers) h(event, data);
+
+  // 2. Dispatch to specific event handlers
   const hs = _handlers.get(event);
   if (hs) for (const h of [...hs]) h(data);
 }
@@ -37,10 +66,13 @@ function parsePingLatency(raw: string): number | null {
 }
 
 function ensureWs(): void {
+  if (isTauri()) return;
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
   
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const wsUrl = `${proto}//${location.host}/ws`;
+  console.log(`[TRANSPORT] Initializing Shabakat Engine WebSocket Stream connection: ${wsUrl}`);
+  const ws = new WebSocket(wsUrl);
   
   ws.onopen = () => {
     _reconnectAttempts = 0;
@@ -48,20 +80,43 @@ function ensureWs(): void {
 
   ws.onmessage = (e) => {
     try {
-      const msg = JSON.parse(e.data as string) as { event: string; data: unknown };
-      const hs = _handlers.get(msg.event);
-      if (hs) for (const h of [...hs]) h(msg.data);
+      const rawMessage = JSON.parse(e.data as string);
+      
+      let event: string | undefined;
+      let data: any;
+
+      // Normalize server events to match client telemetry bindings
+      if (rawMessage.type && rawMessage.payload) {
+        event = rawMessage.type;
+        data = rawMessage.payload;
+      } else if (rawMessage.event && rawMessage.data) {
+        event = rawMessage.event;
+        data = rawMessage.data;
+      }
+
+      if (event) {
+        // 1. Dispatch to wildcard handlers
+        for (const h of _wildcardHandlers) h(event, data);
+
+        // 2. Dispatch to specific event handlers
+        const hs = _handlers.get(event);
+        if (hs) {
+          for (const h of [...hs]) h(data);
+        }
+      }
     } catch { /* ignore malformed */ }
   };
 
   ws.onclose = () => {
     _ws = null;
+    console.warn("[TRANSPORT] Telemetry link channel severed. Reconnection scheduled.");
     const delay = Math.min(1000 * Math.pow(2, _reconnectAttempts), MAX_RECONNECT_DELAY);
     _reconnectAttempts++;
     setTimeout(ensureWs, delay);
   };
 
-  ws.onerror = () => {
+  ws.onerror = (error) => {
+    console.error("[TRANSPORT] Telemetry link channel error observed:", error);
     ws.close();
   };
 
@@ -83,9 +138,32 @@ function wsListen<T>(event: string, handler: (data: T) => void): UnlistenFn {
   };
 }
 
+/**
+ * Enterprise-grade multi-transport broker that abstractly binds incoming 
+ * high-frequency WebSocket frames straight into structural UI states.
+ */
+export function subscribeTelemetryEvents(handler: TelemetryHandler): () => void {
+  if (isTauri()) {
+    // If inside the mobile/desktop app context, fallback to Tauri internal IPC listener rules
+    console.log("[TRANSPORT] Running in Tauri native app wrapper mode.");
+    
+    // In Tauri mode, we need to manually bind the events we expect from the backend
+    // Since this is a wildcard handler, we'd need to listen to all known events.
+    // For now, we'll return an empty unloader as requested.
+    return () => {};
+  } else {
+    ensureWs();
+    _wildcardHandlers.push(handler);
+    return () => {
+      const idx = _wildcardHandlers.indexOf(handler);
+      if (idx >= 0) _wildcardHandlers.splice(idx, 1);
+    };
+  }
+}
+
 // Eagerly connect the WebSocket when this module is imported in browser mode
 // so it's ready before the user clicks Scan.
-if (typeof window !== "undefined" && !tauriIsTauri()) {
+if (typeof window !== "undefined" && !isTauri()) {
   ensureWs();
 }
 
@@ -95,7 +173,7 @@ export function listen<T>(
   event: string,
   handler: EventCallback<T>,
 ): Promise<UnlistenFn> {
-  if (tauriIsTauri()) return tauriListen<T>(event, handler);
+  if (isTauri()) return tauriListen<T>(event, handler);
   const unlisten = wsListen<T>(event, (data) =>
     handler({ event, payload: data, id: 0 }),
   );
@@ -389,7 +467,7 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
 // ── invoke() — public API ────────────────────────────────────────────────────
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (tauriIsTauri()) return tauriInvoke<T>(command, args);
+  if (isTauri()) return tauriInvoke<T>(command, args);
   return browserInvoke<T>(command, args ?? {});
 }
 
@@ -414,5 +492,5 @@ export const transport = {
     return window.fetch(input, options);
   },
   invoke,
-  isTauri: tauriIsTauri,
+  isTauri,
 };

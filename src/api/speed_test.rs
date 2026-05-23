@@ -82,6 +82,7 @@ async fn do_speed_test() -> Result<(f64, f64, f64), String> {
         .map_err(|e| format!("client build: {e}"))?;
 
     // Ping: TCP connect to 1.1.1.1:443
+    log::info!("[SPEED_TEST_TRACE] Phase 1: Initiating Ping test to 1.1.1.1:443");
     let t0 = Instant::now();
     tokio::net::TcpStream::connect("1.1.1.1:443")
         .await
@@ -89,6 +90,7 @@ async fn do_speed_test() -> Result<(f64, f64, f64), String> {
     let ping_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Download: 10 MB from Cloudflare
+    log::info!("[SPEED_TEST_TRACE] Phase 2: Launching HTTP download check");
     let t1 = Instant::now();
     let resp = client
         .get("https://speed.cloudflare.com/__down?bytes=10000000")
@@ -103,6 +105,7 @@ async fn do_speed_test() -> Result<(f64, f64, f64), String> {
     let download_mbps = (bytes.len() as f64 * 8.0) / (dl_elapsed * 1_000_000.0);
 
     // Upload: 1 MB to Cloudflare
+    log::info!("[SPEED_TEST_TRACE] Phase 3: Launching HTTP upload check");
     let upload_data = vec![0u8; 1_000_000];
     let t2 = Instant::now();
     client

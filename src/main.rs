@@ -7,6 +7,7 @@ mod notifications;
 mod scanner;
 mod scheduler;
 mod storage;
+mod tools;
 mod types;
 
 use std::net::SocketAddr;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub log_tx: broadcast::Sender<String>,
     pub devices: Arc<Mutex<Vec<DiscoveredDevice>>>,
     pub bandwidth: Arc<Mutex<Option<crate::types::RouterBandwidth>>>,
+    pub system_telemetry: Arc<Mutex<Option<crate::types::SystemTelemetry>>>,
 }
 
 struct BroadcastLogger {
@@ -75,6 +77,7 @@ async fn main() {
         log_tx,
         devices: Arc::new(Mutex::new(Vec::new())),
         bandwidth: Arc::new(Mutex::new(None)),
+        system_telemetry: Arc::new(Mutex::new(None)),
     };
 
     // Background scan scheduler
@@ -89,8 +92,14 @@ async fn main() {
     // Router bandwidth monitor
     tokio::spawn(monitor::router::run_bandwidth_monitor(state.clone()));
 
+    // System metrics monitor (local bandwidth)
+    tokio::spawn(monitor::sys_metrics::run_sys_metrics_monitor(state.clone()));
+
     // Passive mDNS presence monitor
-    tokio::spawn(monitor::presence::run_presence_monitor(state.db.clone()));
+    tokio::spawn(monitor::presence::run_presence_monitor(state.clone()));
+
+    // Metrics compactor (4-hour cycle)
+    tokio::spawn(monitor::compactor::run_metrics_compactor(state.clone()));
 
     let mut app = api::router(state);
 

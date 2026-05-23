@@ -1,5 +1,6 @@
-pub mod devices;
 pub mod history;
+pub mod devices;
+pub mod metrics;
 pub mod migrations;
 pub mod networks;
 pub mod providers;

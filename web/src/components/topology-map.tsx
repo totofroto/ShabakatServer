@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from "react";
-import { Loader2, Server, Shield, Smartphone, Laptop, Tv, Router, Globe, Cpu, X, Info, Activity, Fingerprint } from "lucide-react";
+import { Loader2, Server, Shield, Smartphone, Laptop, Tv, Router, Globe, Cpu, X, Info, Activity, Fingerprint, Zap } from "lucide-react";
 import * as d3 from "d3";
+import { subscribeTelemetryEvents, LatencyUpdate } from "@/lib/transport";
 
 type TopologyNode = d3.SimulationNodeDatum & {
   id: string;
@@ -12,6 +13,8 @@ type TopologyNode = d3.SimulationNodeDatum & {
   isOnline: boolean;
   likelyType: string | null;
   vendor: string | null;
+  latencyMs?: number | null;
+  lastLatencyUpdate?: number;
 };
 
 type TopologyEdge = d3.SimulationLinkDatum<TopologyNode> & {
@@ -44,11 +47,16 @@ export function TopologyMap() {
   const [data, setData] = useState<TopologyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [dimensions, setDimensions] = useState({ width: 800, height: 400 });
-  const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   
   const [nodes, setNodes] = useState<TopologyNode[]>([]);
   const nodesRef = useRef<TopologyNode[]>([]);
   const [links, setLinks] = useState<TopologyEdge[]>([]);
+
+  const selectedNode = useMemo(() => 
+    nodes.find(n => n.id === selectedNodeId) || null, 
+    [nodes, selectedNodeId]
+  );
   const [transform, setTransform] = useState(d3.zoomIdentity);
   const simulationRef = useRef<d3.Simulation<TopologyNode, TopologyEdge> | null>(null);
 
@@ -80,6 +88,8 @@ export function TopologyMap() {
             n.y = prev.y;
             n.vx = prev.vx;
             n.vy = prev.vy;
+            n.latencyMs = prev.latencyMs;
+            n.lastLatencyUpdate = prev.lastLatencyUpdate;
           }
         });
         return json;
@@ -96,6 +106,37 @@ export function TopologyMap() {
     const interval = setInterval(fetchTopology, 30000); // Polling every 30s is enough
     return () => clearInterval(interval);
   }, []); // Remove nodes dependency to stop infinite loop
+
+  // Subscribe to live telemetry
+  useEffect(() => {
+    console.log("[GRAPH] Binding live D3 graph node state to telemetry broker stream...");
+    const unsubscribe = subscribeTelemetryEvents((event, data) => {
+      if (event === "latency_update") {
+        const update = data as LatencyUpdate;
+        setNodes(currentNodes => {
+          const newNodes = currentNodes.map(node => {
+            // Match by MAC (node.id) or IP
+            if (node.id === update.mac || (node.ip && node.ip === update.ip)) {
+              console.log(`[GRAPH] Real-time latency update applied for ${update.ip || update.mac}: ${update.latencyMs}ms`);
+              return {
+                ...node,
+                latencyMs: update.latencyMs,
+                isOnline: update.isOnline,
+                lastLatencyUpdate: Date.now()
+              };
+            }
+            return node;
+          });
+          nodesRef.current = newNodes;
+          return newNodes;
+        });
+      }
+    });
+    return () => {
+      console.log("[GRAPH] Releasing graph telemetry bindings.");
+      unsubscribe();
+    };
+  }, []);
 
   // Handle Resize
   useEffect(() => {
@@ -210,7 +251,7 @@ export function TopologyMap() {
     <div 
       ref={containerRef} 
       className="relative size-full overflow-hidden bg-void"
-      onClick={() => setSelectedNode(null)}
+      onClick={() => setSelectedNodeId(null)}
     >
       {/* Starfield background */}
       <div className="absolute inset-0 opacity-10 pointer-events-none">
@@ -280,10 +321,23 @@ export function TopologyMap() {
                 className="cursor-pointer group"
                 onClick={(e) => {
                    e.stopPropagation();
-                   setSelectedNode(node);
+                   setSelectedNodeId(node.id);
                    console.log(`Device Selected: ${node.label} [${node.ip || 'No IP'}] MAC: ${node.id}`);
                 }}
               >
+                {/* Latency Pulse Effect */}
+                {node.lastLatencyUpdate && (Date.now() - node.lastLatencyUpdate < 2000) && isOnline && (
+                  <circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={node.isGateway ? 24 : 18}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="2"
+                    className="animate-ping opacity-30"
+                  />
+                )}
+
                 {/* Glow for important nodes */}
                 {(isImportant || node.isGateway || isSelected) && isOnline && (
                   <circle
@@ -340,6 +394,30 @@ export function TopologyMap() {
                     {node.ip}
                   </text>
                 )}
+
+                {/* Real-time Latency */}
+                {isOnline && node.latencyMs !== undefined && node.latencyMs !== null && (
+                  <g transform={`translate(${node.x + (node.isGateway ? 20 : 16)}, ${node.y - (node.isGateway ? 20 : 16)})`}>
+                    <rect
+                      x="-12"
+                      y="-6"
+                      width="24"
+                      height="12"
+                      rx="4"
+                      fill="var(--bg-surface)"
+                      stroke={color}
+                      strokeWidth="0.5"
+                      className="opacity-80"
+                    />
+                    <text
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      className="fill-white font-mono text-[6px] font-bold"
+                    >
+                      {Math.round(node.latencyMs)}ms
+                    </text>
+                  </g>
+                )}
               </g>
             );
           })}
@@ -364,7 +442,7 @@ export function TopologyMap() {
                 </p>
               </div>
               <button 
-                onClick={() => setSelectedNode(null)}
+                onClick={() => setSelectedNodeId(null)}
                 className="rounded-full p-1 text-tertiary hover:bg-white/10 hover:text-white transition-colors"
               >
                 <X className="size-4" />
@@ -373,6 +451,18 @@ export function TopologyMap() {
 
             {/* Info Grid */}
             <div className="space-y-4">
+              {selectedNode.isOnline && selectedNode.latencyMs !== undefined && selectedNode.latencyMs !== null && (
+                <div className="flex items-center gap-3">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-[#30D158]">
+                    <Zap className="size-4 fill-[#30D158]/20" />
+                  </div>
+                  <div>
+                    <p className="text-[8px] font-bold uppercase tracking-widest text-tertiary">Real-time Latency</p>
+                    <p className="font-mono text-xs text-[#30D158] font-black">{Math.round(selectedNode.latencyMs)}<span className="text-[10px] ml-0.5 opacity-70">ms</span></p>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center gap-3">
                 <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-accent">
                   <Activity className="size-4" />

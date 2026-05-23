@@ -126,6 +126,20 @@ pub async fn trigger_scan(
                                 "[FLIGHT_RECORDER] DB persistence complete — {} new device(s) recorded.",
                                 new_devices.len()
                             );
+
+                            // Broadcast live intruder alerts for the UI
+                            let timestamp = crate::storage::now_ms();
+                            for (name, _vendor, ip, mac) in new_devices {
+                                let _ = broadcast_tx.send(json!({
+                                    "type": "new-device",
+                                    "payload": {
+                                        "timestampMs": timestamp,
+                                        "mac": mac,
+                                        "name": name,
+                                        "ip": ip,
+                                    }
+                                }));
+                            }
                         }
                         Err(e) => {
                             log::error!(
