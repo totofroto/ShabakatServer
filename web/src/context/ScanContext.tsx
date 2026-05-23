@@ -49,7 +49,7 @@ type ScanContextValue = {
 };
 
 const ScanContext = createContext<ScanContextValue | undefined>(undefined);
-const SCORE_STORAGE_KEY = "netvision_network_score_state";
+const SCORE_STORAGE_KEY = "shabakat_network_score_state";
 
 export function ScanProvider({ children }: { children: ReactNode }) {
   const {

@@ -7,6 +7,7 @@ pub mod ping;
 pub mod resolver;
 pub mod router_api;
 pub mod sys_metrics;
+pub mod vulnerability;
 
 /// Delegates to the port-fingerprint engine in `fingerprints`.
 pub fn identify_by_ports(open_ports: &[u16]) -> String {

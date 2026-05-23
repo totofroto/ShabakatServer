@@ -17,71 +17,8 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
 
-const UI: Record<
-  | "appName"
-  | "switchToArabic"
-  | "switchToEnglish"
-  | "switchToGerman"
-  | "spatialPosture"
-  | "engineCaption"
-  | "wifiRequired"
-  | "dashboard"
-  | "devices"
-  | "activity"
-  | "alerts"
-  | "tools"
-  | "settings"
-  | "discover"
-  | "monitor"
-  | "networkInfo"
-  | "aboutSystem"
-  | "profileName"
-  | "profilePartner"
-  | "profileOrigin"
-  | "profileLocation"
-  | "logout"
-  | "adminSession",
-  { en: string; ar: string; de?: string }
-> = {
-  appName: { en: "SHABAKAT", ar: "شبكات", de: "SHABAKAT" },
-  switchToArabic: { en: "Switch to Arabic", ar: "التبديل إلى العربية", de: "Auf Arabisch umstellen" },
-  switchToEnglish: { en: "Switch to English", ar: "التبديل إلى الإنجليزية", de: "Auf Englisch umstellen" },
-  switchToGerman: { en: "Switch to German", ar: "التبديل إلى الألمانية", de: "Auf Deutsch umstellen" },
-  spatialPosture: { en: "Spatial network posture", ar: "وضع الشبكة المكاني", de: "Räumliche Netzwerkhaltung" },
-  engineCaption: {
-    en: "Scanner engine · local network posture",
-    ar: "محرك الفحص · وضع الشبكة المحلية",
-    de: "Scanner-Engine · lokale Netzwerkhaltung",
-  },
-  wifiRequired: {
-    en: "Connect to Wi-Fi to run a local network scan.",
-    ar: "التبديل إلى الإنجليزية",
-    de: "Mit Wi-Fi verbinden, um einen lokalen Netzwerkscan durchzuführen.",
-  },
-  dashboard: { en: "Dashboard", ar: "لوحة المعلومات", de: "Dashboard" },
-  devices: { en: "Devices", ar: "الأجهزة", de: "Geräte" },
-  activity: { en: "Activity", ar: "النشاط", de: "Aktivität" },
-  alerts: { en: "Alerts", ar: "التنبيهات", de: "Warnungen" },
-  tools: { en: "Tools", ar: "الأدوات", de: "Werkzeuge" },
-  settings: { en: "Settings", ar: "الإعدادات", de: "Einstellungen" },
-  discover: { en: "Discover", ar: "اكتشاف", de: "Entdecken" },
-  monitor: { en: "Monitor", ar: "مراقبة", de: "Überwachen" },
-  networkInfo: { en: "Network Info", ar: "شبكة", de: "Netzwerk-Info" },
-  aboutSystem: { en: "About System", ar: "عن النظام", de: "Über das System" },
-  profileName: { en: "Tareg Shek", ar: "طارق شيك", de: "Tareg Shek" },
-  profilePartner: {
-    en: "Fatima-Samsmona Allaymona Waddan",
-    ar: "فاطمة سمسمونة الليمونة ودان",
-    de: "Fatima-Samsmona Allaymona Waddan",
-  },
-  profileOrigin: { en: "Libya", ar: "ليبيا", de: "Libyen" },
-  profileLocation: { en: "Datteln, Germany", ar: "داتلن، ألمانيا", de: "Datteln, Deutschland" },
-  logout: { en: "Log out", ar: "تسجيل الخروج", de: "Abmelden" },
-  adminSession: { en: "Admin Session", ar: "جلسة المسؤول", de: "Admin-Sitzung" },
-};
-
 const sidebarNavigation: Array<{
-  key: "dashboard" | "devices" | "activity" | "alerts" | "tools" | "settings";
+  key: keyof (typeof import("../locales/en.json"));
   to: string;
 }> = [
   { key: "dashboard", to: "/" },
@@ -95,7 +32,7 @@ const sidebarNavigation: Array<{
 const tabBarItems: {
   id: string;
   to: string;
-  labelKey: "discover" | "devices" | "monitor" | "tools" | "networkInfo";
+  labelKey: keyof (typeof import("../locales/en.json"));
   Icon: typeof Radar;
   end?: boolean;
 }[] = [
@@ -106,11 +43,9 @@ const tabBarItems: {
   { id: "network", to: "/activity", labelKey: "networkInfo", Icon: Wifi },
 ];
 
-/** Inner display / tablet “command center” (~Z Fold unfolded) uses `md` (768px). */
 export function AppShell() {
-  const { lang, toggleLang, isRtl } = useLanguage();
+  const { lang, toggleLang, isRtl, dict } = useLanguage();
   const { user, logout } = useAuth();
-  const t = (key: keyof typeof UI) => (UI[key] as any)[lang] || UI[key].en;
 
   const [settings, setSettings] = useState<Record<string, string>>({});
 
@@ -164,7 +99,7 @@ export function AppShell() {
             <h1 className="pointer-events-none inline-flex items-center gap-2 text-base font-black leading-none tracking-[0.15em] text-primary sm:text-lg">
               <Radar className="size-4 shrink-0 text-accent sm:size-5" aria-hidden />
               <span className="block truncate">
-                {t("appName")}
+                {dict.appName}
               </span>
             </h1>
           </div>
@@ -175,10 +110,10 @@ export function AppShell() {
               className="rounded-md border border-separator bg-surface-alt px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-secondary transition-colors hover:text-primary"
               title={
                 lang === "en" 
-                  ? t("switchToArabic") 
+                  ? dict.switchToArabic 
                   : lang === "ar" 
-                    ? t("switchToGerman") 
-                    : t("switchToEnglish")
+                    ? dict.switchToGerman 
+                    : dict.switchToEnglish
               }
             >
               {lang === "en" ? "عربي" : lang === "ar" ? "DE" : "EN"}
@@ -194,12 +129,12 @@ export function AppShell() {
             <div className="flex items-start justify-between gap-2">
               <h1 className="flex min-w-0 items-center gap-2 text-2xl font-semibold text-primary">
                 <Radar className="size-6 shrink-0 text-accent" aria-hidden />
-                <span className="truncate">{t("appName")}</span>
+                <span className="truncate">{dict.appName}</span>
               </h1>
               <NotificationCenterBell />
             </div>
             <p className="mt-1 text-xs text-secondary">
-              {t("spatialPosture")}
+              {dict.spatialPosture}
             </p>
           </div>
 
@@ -216,7 +151,7 @@ export function AppShell() {
                   )
                 }
               >
-                {t(item.key)}
+                {dict[item.key as keyof typeof dict] as string}
               </NavLink>
             ))}
           </nav>
@@ -225,7 +160,7 @@ export function AppShell() {
             <div className="mt-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-accent mb-2">
                 <ShieldCheck className="size-3" />
-                {t("adminSession")}
+                {dict.adminSession}
               </div>
               <p className="text-[11px] text-primary truncate font-medium">{user.email}</p>
               <button
@@ -233,24 +168,24 @@ export function AppShell() {
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-separator bg-surface px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-secondary transition hover:bg-surface-alt hover:text-primary"
               >
                 <LogOut className="size-3" />
-                {t("logout")}
+                {dict.logout}
               </button>
             </div>
           )}
 
           <div className="mt-8 rounded-lg border border-separator bg-surface-alt p-4">
             <h2 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-secondary">
-              {t("aboutSystem")}
+              {dict.aboutSystem}
             </h2>
             <div className="space-y-1 text-xs">
-              <p className="font-medium text-primary">{t("profileName")}</p>
+              <p className="font-medium text-primary">{dict.profileName}</p>
               <p className="text-secondary leading-relaxed">
-                {t("profilePartner")}
+                {dict.profilePartner}
               </p>
               <div className="mt-2 flex items-center gap-2 text-[10px] text-accent">
-                <span>{t("profileOrigin")}</span>
+                <span>{dict.profileOrigin}</span>
                 <span className="size-1 rounded-full bg-separator" />
-                <span>{t("profileLocation")}</span>
+                <span>{dict.profileLocation}</span>
               </div>
             </div>
           </div>
@@ -262,10 +197,10 @@ export function AppShell() {
               className="w-full rounded-lg border border-separator bg-surface-alt px-3 py-2 text-left text-xs font-semibold text-secondary transition-colors hover:text-primary"
               title={
                 lang === "en" 
-                  ? t("switchToArabic") 
+                  ? dict.switchToArabic 
                   : lang === "ar" 
-                    ? t("switchToGerman") 
-                    : t("switchToEnglish")
+                    ? dict.switchToGerman 
+                    : dict.switchToEnglish
               }
             >
               {lang === "en" 
@@ -275,7 +210,7 @@ export function AppShell() {
                   : "🌐 English / الإنجليزية"}
             </button>
             <div className="rounded-lg border border-separator bg-surface p-4 text-xs text-secondary">
-              {t("engineCaption")}
+              {dict.engineCaption}
             </div>
           </div>
         </aside>
@@ -305,7 +240,7 @@ export function AppShell() {
             }
           >
             <Icon className="w-5 h-5" aria-hidden />
-            <span>{t(labelKey)}</span>
+            <span>{dict[labelKey as keyof typeof dict] as string}</span>
           </NavLink>
         ))}
       </nav>

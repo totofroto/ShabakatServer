@@ -45,65 +45,6 @@ type SpeedResult = {
   testedAt: number;
 };
 
-const UI = {
-  pillNotMeasured:     { en: "Network: Not measured",          ar: "الشبكة: غير مقيَّمة" },
-  pillSecure:          { en: "Network: Secure & optimal",      ar: "الشبكة: آمنة ومثلى" },
-  pillStable:          { en: "Network: Stable",                ar: "الشبكة: مستقرة" },
-  pillAttention:       { en: "Network: Needs attention",       ar: "الشبكة: تحتاج اهتماماً" },
-  posture:             { en: "Posture",                        ar: "الوضع" },
-  notMeasured:         { en: "Not Measured",                   ar: "غير مقيَّم" },
-  excellent:           { en: "Excellent",                      ar: "ممتاز" },
-  good:                { en: "Good",                           ar: "جيد" },
-  needsAttention:      { en: "Needs Attention",                ar: "يحتاج اهتماماً" },
-  healthShieldLabel:   { en: "Network Health Shield",          ar: "درع صحة الشبكة" },
-  healthShieldTitle:   { en: "Overall Security & Performance", ar: "الأمان والأداء العام" },
-  shieldHint:          { en: "Click the shield for score details.", ar: "اضغط على الدرع لرؤية تفاصيل الدرجة." },
-  networkStatus:       { en: "Network Status",                 ar: "حالة الشبكة" },
-  localNetwork:        { en: "Local Network",                  ar: "الشبكة المحلية" },
-  offline:             { en: "Offline",                        ar: "غير متصل" },
-  online:              { en: "Online",                         ar: "متصل" },
-  unknown:             { en: "Unknown",                        ar: "غير معروف" },
-  devicesLabel:        { en: "Devices",                        ar: "الأجهزة" },
-  onlineCount:         { en: "{n} currently reporting online", ar: "{n} متصل حالياً" },
-  lastSpeedTest:       { en: "Last Speed Test",                ar: "آخر اختبار سرعة" },
-  lastTestedAt:        { en: "Last tested at {time}",          ar: "آخر اختبار في {time}" },
-  noSpeedTestYet:      { en: "No speed test run yet",          ar: "لم يُجرَ اختبار سرعة بعد" },
-  networkOverview:     { en: "Network Overview",               ar: "نظرة عامة على الشبكة" },
-  networkOverviewDesc: { en: "Real-time NOC view of your local network posture.", ar: "عرض مركز العمليات في الوقت الفعلي لوضع شبكتك المحلية." },
-  recentActivity:      { en: "Recent Activity",                ar: "النشاط الأخير" },
-  recentActivityDesc:  { en: "Last 5 online devices detected in the most recent scan.", ar: "آخر 5 أجهزة متصلة اكتُشفت في آخر فحص." },
-  noRecentDevices:     { en: "No recent online devices yet. Run a network scan from Devices.", ar: "لا توجد أجهزة متصلة حديثاً. شغّل فحص الشبكة من صفحة الأجهزة." },
-  onlineWithVendor:    { en: "Online · {vendor}",              ar: "متصل · {vendor}" },
-  scoreBreakdown:      { en: "Score Breakdown",                ar: "تفصيل الدرجة" },
-  speed:               { en: "Speed:",                         ar: "السرعة:" },
-  latency:             { en: "Latency:",                       ar: "زمن الاستجابة:" },
-  security:            { en: "Security:",                      ar: "الأمان:" },
-  notMeasuredShort:    { en: "not measured",                   ar: "غير مقيَّس" },
-  deductsNote:         { en: "Deducts 5 points per unknown vendor or randomized MAC found in the latest scan.", ar: "يُخصم 5 نقاط لكل بائع مجهول أو MAC عشوائي في آخر فحص." },
-  internetHealth:      { en: "Internet Health",                ar: "صحة الإنترنت" },
-  internetOnline:      { en: "✅ Online",                      ar: "✅ متصل" },
-  internetDown:        { en: "🔴 Down since {time}",           ar: "🔴 منقطع منذ {time}" },
-  lastOutage:          { en: "Last outage: {min} min, {days} days ago", ar: "آخر انقطاع: {min} د، منذ {days} أيام" },
-  noOutages:           { en: "No outages recorded",            ar: "لا انقطاعات مسجَّلة" },
-  runSpeedTest:        { en: "Run Speed Test",                 ar: "تشغيل اختبار السرعة" },
-  testing:             { en: "Testing…",                       ar: "جارٍ الاختبار…" },
-  speedHistory:        { en: "Recent results",                 ar: "نتائج سابقة" },
-  // Browser-mode additions
-  waddanTitle:         { en: "WADDAN — Home Network",         ar: "شبكة المنزل — WADDAN" },
-  waddanSubtitle:      { en: "Live monitoring",               ar: "مراقبة مباشرة" },
-  knownLabel:          { en: "known",                         ar: "معروف" },
-  uptimeLabel:         { en: "Uptime",                        ar: "وقت التشغيل" },
-  noOutagesToday:      { en: "No outages today",              ar: "لا انقطاعات اليوم" },
-  outageHistoryTitle:  { en: "Outage History (7d)",           ar: "سجل الانقطاعات (7 أيام)" },
-  noOutagePast7d:      { en: "No outages in the last 7 days ✅", ar: "لا انقطاعات خلال 7 أيام ✅" },
-  ongoing:             { en: "Ongoing",                       ar: "جارٍ" },
-  speedTestTitle:      { en: "Speed Test",                    ar: "اختبار السرعة" },
-  speedHistoryTable:   { en: "History",                       ar: "السجل" },
-  noHistoryYet:        { en: "No results yet — run a test.",  ar: "لا نتائج بعد — شغّل اختباراً." },
-  pingLabel:           { en: "Ping",                          ar: "بينغ" },
-  launchPortal:        { en: "Launch Portal",                 ar: "فتح البوابة" },
-} as const;
-
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
 function fmtTime(tsMs: number): string {
@@ -144,8 +85,8 @@ function NetworkHealthDisplay({
   score: number;
   hasNetworkScoreData: boolean;
 }) {
-  const { lang } = useLanguage();
-  const t = (key: keyof typeof UI) => (UI[key] as any)[lang] || UI[key].en;
+  const { lang, dict } = useLanguage();
+  const t = (key: string) => (dict as any)[key] || key;
 
   const displayScore = hasNetworkScoreData ? Math.min(Math.max(score, 0), 100) : 0;
   const dashOffset =
@@ -451,7 +392,7 @@ type ApiNetwork = { ssid: string | null; gateway: string | null };
 
 export function DashboardPage() {
   const { lang, dict } = useLanguage();
-  const t = (key: keyof typeof UI) => (UI[key] as any)[lang] || UI[key].en;
+  const t = (key: string) => (dict as any)[key] || key;
   const [wifiInfo, setWifiInfo] = useState<WifiInfoPayload | null>(null);
   const [apiNetwork, setApiNetwork] = useState<ApiNetwork | null>(null);
   const { networkState, lanScanAllowed } = useNetworkConnectivity();

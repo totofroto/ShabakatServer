@@ -8,17 +8,16 @@ import {
 } from "react";
 import enDict from "../locales/en.json";
 import deDict from "../locales/de.json";
+import arDict from "../locales/ar.json";
 
 export type AppLang = "en" | "ar" | "de";
 
 type Dictionary = typeof enDict;
 
-const dictionaries: Record<string, Dictionary> = {
+const dictionaries: Record<AppLang, Dictionary> = {
   en: enDict,
   de: deDict,
-  // Arabic can fall back to English for these specific tactical strings for now,
-  // or we can add ar.json to locales as well if needed.
-  ar: enDict, 
+  ar: arDict,
 };
 
 type LanguageContextValue = {

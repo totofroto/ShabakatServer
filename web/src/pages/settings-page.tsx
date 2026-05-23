@@ -12,47 +12,10 @@ import { useAuth } from "@/context/AuthContext";
 import { DnsProvider } from "@/types";
 import { Plus, Trash2, ShieldCheck, Power, Palette, Upload, Check, LogIn, ShieldAlert } from "lucide-react";
 
-const UI: Record<string, { en: string; ar: string }> = {
-  title: { en: "Settings", ar: "الإعدادات" },
-  desc: {
-    en: "Configure scanner behavior and notifications (coming soon).",
-    ar: "قم بضبط سلوك الفحص والإشعارات (قريبًا).",
-  },
-  scannerConfig: { en: "Scanner Configuration", ar: "إعدادات الفاحص" },
-  scannerConfigDesc: {
-    en: "Placeholder options for scan interval, subnet ranges, and alert policies.",
-    ar: "خيارات تجريبية لفترة الفحص ونطاقات الشبكة وسياسات التنبيه.",
-  },
-  scanInterval: { en: "Scan interval: 15 min (placeholder)", ar: "فترة الفحص: 15 دقيقة (تجريبي)" },
-  subnet: { en: "Monitored subnet: 192.168.1.0/24", ar: "الشبكة الفرعية المراقبة: 192.168.1.0/24" },
-  sensitivity: { en: "Alert sensitivity: Medium", ar: "حساسية التنبيه: متوسطة" },
-  channel: { en: "Notification channel: Desktop", ar: "قناة الإشعارات: سطح المكتب" },
-  personalizationTitle: { en: "Personalization", ar: "التخصيص" },
-  personalizationDesc: { en: "Configure your backdrop and visual experience.", ar: "قم بضبط الخلفية والخبرة البصرية الخاصة بك." },
-  backdropVoid: { en: "True Black Void", ar: "الفراغ الأسود الحقيقي" },
-  backdropGray: { en: "Tactical Dark Gray", ar: "الرمادي التكتيكي الغامق" },
-  backdropCustom: { en: "Custom Blueprint", ar: "مخطط مخصص" },
-  uploadWallpaper: { en: "Upload Custom Blueprint Wallpaper", ar: "تحميل خلفية مخصصة" },
-  dnsTitle: { en: "DNS Monitoring", ar: "مراقبة DNS" },
-  dnsDesc: { en: "Manage AdGuard Home or other DNS providers for device security stats.", ar: "إدارة AdGuard Home أو مزودي DNS الآخرين لإحصائيات أمان الأجهزة." },
-  addProvider: { en: "Save Provider", ar: "حفظ المزود" },
-  providerName: { en: "Name (e.g. Home AdGuard)", ar: "الاسم (مثلاً AdGuard المنزلي)" },
-  providerIp: { en: "IP Address", ar: "عنوان IP" },
-  providerPort: { en: "Port", ar: "المنفذ" },
-  providerUser: { en: "Username (optional)", ar: "اسم المستخدم (اختياري)" },
-  providerPass: { en: "Password (optional)", ar: "كلمة المرور (اختياري)" },
-  active: { en: "Active", ar: "نشط" },
-  disabled: { en: "Disabled", ar: "معطل" },
-  accessTitle: { en: "System Access", ar: "الوصول إلى النظام" },
-  accessDesc: { en: "Manage your administrative session and authentication.", ar: "إدارة جلسة العمل الإدارية والتحقق من الهوية." },
-  loginWithGoogle: { en: "Sign in with Google", ar: "تسجيل الدخول باستخدام جوجل" },
-  signOut: { en: "Sign Out", ar: "تسجيل الخروج" },
-};
-
 export function SettingsPage() {
-  const { lang } = useLanguage();
+  const { lang, dict } = useLanguage();
   const { user } = useAuth();
-  const t = (key: string) => (UI[key] as any)?.[lang] || UI[key]?.en || key;
+  const t = (key: string) => (dict as any)[key] || key;
 
   const [providers, setProviders] = useState<DnsProvider[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -200,9 +163,9 @@ export function SettingsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-3xl font-semibold text-primary">{t("title")}</h2>
+        <h2 className="text-3xl font-semibold text-primary">{dict.settings}</h2>
         <p className="mt-1 text-sm text-secondary">
-          {t("desc")}
+          {dict.settingsDesc}
         </p>
       </header>
 
@@ -211,10 +174,10 @@ export function SettingsPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-accent" />
-            <CardTitle className="text-primary">{t("accessTitle")}</CardTitle>
+            <CardTitle className="text-primary">{dict.accessTitle}</CardTitle>
           </div>
           <CardDescription className="text-secondary">
-            {t("accessDesc")}
+            {dict.accessDesc}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -233,7 +196,7 @@ export function SettingsPage() {
                   className="border-destructive/50 text-destructive hover:bg-destructive/10"
                 >
                   <Power className="w-4 h-4 mr-2" />
-                  {t("signOut")}
+                  {dict.signOut}
                 </Button>
               )}
               <Button
@@ -241,7 +204,7 @@ export function SettingsPage() {
                 className="bg-white text-black hover:bg-zinc-200 font-semibold"
               >
                 <LogIn className="w-4 h-4 mr-2" />
-                {t("loginWithGoogle")}
+                {dict.loginWithGoogle}
               </Button>
             </div>
           </div>
@@ -253,10 +216,10 @@ export function SettingsPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Palette className="h-5 w-5 text-primary" />
-            <CardTitle className="text-primary">{t("personalizationTitle")}</CardTitle>
+            <CardTitle className="text-primary">{dict.personalizationTitle}</CardTitle>
           </div>
           <CardDescription className="text-secondary">
-            {t("personalizationDesc")}
+            {dict.personalizationDesc}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -268,7 +231,7 @@ export function SettingsPage() {
               }`}
             >
               <div className="h-12 w-full rounded bg-[#000000]" />
-              <span className="text-xs font-medium">{t("backdropVoid")}</span>
+              <span className="text-xs font-medium">{dict.backdropVoid}</span>
               {activeBackdrop === "void" && <Check className="absolute top-2 right-2 h-3 w-3 text-primary" />}
             </button>
 
@@ -279,7 +242,7 @@ export function SettingsPage() {
               }`}
             >
               <div className="h-12 w-full rounded bg-[#1a1a1a]" />
-              <span className="text-xs font-medium">{t("backdropGray")}</span>
+              <span className="text-xs font-medium">{dict.backdropGray}</span>
               {activeBackdrop === "gray" && <Check className="absolute top-2 right-2 h-3 w-3 text-primary" />}
             </button>
 
@@ -301,7 +264,7 @@ export function SettingsPage() {
                     <Palette className="h-5 w-5 text-secondary/30" />
                   </div>
                 )}
-                <span className="text-xs font-medium">{t("backdropCustom")}</span>
+                <span className="text-xs font-medium">{dict.backdropCustom}</span>
                 {activeBackdrop === "custom" && <Check className="absolute top-2 right-2 h-3 w-3 text-primary" />}
               </button>
               
@@ -320,7 +283,7 @@ export function SettingsPage() {
                 disabled={uploading}
               >
                 <Upload className="h-3 w-3" />
-                {t("uploadWallpaper")}
+                {dict.uploadWallpaper}
               </Button>
             </div>
           </div>
@@ -332,10 +295,10 @@ export function SettingsPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-primary" />
-            <CardTitle className="text-primary">{t("dnsTitle")}</CardTitle>
+            <CardTitle className="text-primary">{dict.dnsTitle}</CardTitle>
           </div>
           <CardDescription className="text-secondary">
-            {t("dnsDesc")}
+            {dict.dnsDesc}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -367,7 +330,7 @@ export function SettingsPage() {
                     onClick={() => toggleProvider(p.id, p.isEnabled)}
                     className={p.isEnabled ? "text-primary" : "text-secondary"}
                   >
-                    {p.isEnabled ? t("active") : t("disabled")}
+                    {p.isEnabled ? dict.active : dict.disabled}
                   </Button>
                   <Button
                     variant="ghost"
@@ -385,7 +348,7 @@ export function SettingsPage() {
           {/* Inline Add Form */}
           <form onSubmit={handleAddProvider} className="mt-4 grid gap-4 rounded-md border border-separator bg-surface-alt/30 p-4 md:grid-cols-3">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-secondary">{t("providerName")}</label>
+              <label className="text-xs font-medium text-secondary">{dict.providerName}</label>
               <input
                 type="text"
                 value={newProvider.name}
@@ -395,7 +358,7 @@ export function SettingsPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-secondary">{t("providerIp")}</label>
+              <label className="text-xs font-medium text-secondary">{dict.providerIp}</label>
               <input
                 type="text"
                 value={newProvider.ip}
@@ -406,7 +369,7 @@ export function SettingsPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-secondary">{t("providerPort")}</label>
+              <label className="text-xs font-medium text-secondary">{dict.providerPort}</label>
               <input
                 type="number"
                 value={newProvider.port}
@@ -415,7 +378,7 @@ export function SettingsPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-secondary">{t("providerUser")}</label>
+              <label className="text-xs font-medium text-secondary">{dict.providerUser}</label>
               <input
                 type="text"
                 value={newProvider.username}
@@ -424,7 +387,7 @@ export function SettingsPage() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-secondary">{t("providerPass")}</label>
+              <label className="text-xs font-medium text-secondary">{dict.providerPass}</label>
               <input
                 type="password"
                 value={newProvider.password}
@@ -435,7 +398,7 @@ export function SettingsPage() {
             <div className="flex items-end">
               <Button type="submit" className="w-full gap-2">
                 <Plus className="h-4 w-4" />
-                {t("addProvider")}
+                {dict.addProvider}
               </Button>
             </div>
           </form>
@@ -444,23 +407,23 @@ export function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-primary">{t("scannerConfig")}</CardTitle>
+          <CardTitle className="text-primary">{dict.scannerConfiguration}</CardTitle>
           <CardDescription className="text-secondary">
-            {t("scannerConfigDesc")}
+            {dict.scannerConfigurationDesc}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 text-sm text-secondary md:grid-cols-2">
           <div className="rounded-md border border-separator bg-surface-alt p-3">
-            {t("scanInterval")}
+            {dict.scanInterval}
           </div>
           <div className="rounded-md border border-separator bg-surface-alt p-3">
-            {t("subnet")}
+            {dict.monitoredSubnet}
           </div>
           <div className="rounded-md border border-separator bg-surface-alt p-3">
-            {t("sensitivity")}
+            {dict.alertSensitivity}
           </div>
           <div className="rounded-md border border-separator bg-surface-alt p-3">
-            {t("channel")}
+            {dict.notificationChannel}
           </div>
         </CardContent>
       </Card>

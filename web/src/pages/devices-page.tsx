@@ -43,8 +43,7 @@ import { cn } from "@/lib/utils";
 
 const UI: Record<string, { en: string; ar: string; de?: string }> = {
   pageTitle:      { en: "Devices",                           ar: "الأجهزة" },
-  pageDesc:       { en: "Discover hosts on your local network via the NetVision scanner.", ar: "اكتشف الأجهزة على شبكتك المحلية عبر ماسح NetVision." },
-  scanNetwork:    { en: "Scan Network",                      ar: "مسح الشبكة" },
+  pageDesc:       { en: "Discover hosts on your local network via the Shabakat scanner.", ar: "اكتشف الأجهزة على شبكتك المحلية عبر ماسح Shabakat." },  scanNetwork:    { en: "Scan Network",                      ar: "مسح الشبكة" },
   scanning:       { en: "Scanning",                          ar: "جارٍ المسح" },
   listView:       { en: "List View",                         ar: "قائمة" },
   starMapView:    { en: "Star-Map View",                     ar: "خريطة النجوم" },
