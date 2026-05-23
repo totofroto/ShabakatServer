@@ -181,28 +181,74 @@ pub async fn run_terminal_command(Json(payload): Json<TerminalRequest>) -> impl 
         });
     }
 
-    match tokio::process::Command::new(cmd)
-        .args(args)
-        .output()
-        .await
-    {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let output = if out.status.success() {
-                stdout.to_string()
-            } else {
-                format!(
-                    "Error (exit code {}):\n{}{}",
-                    out.status.code().unwrap_or(-1),
-                    stdout,
-                    stderr
-                )
-            };
-            Json(TerminalResponse { output })
+    // Intercept specific commands for specialized handling
+    let output = match cmd {
+        "arp" => {
+            // Requirement: Output raw /proc/net/arp instead of calling arp binary
+            match tokio::fs::read_to_string("/proc/net/arp").await {
+                Ok(content) => content,
+                Err(e) => format!("Error reading /proc/net/arp: {}", e),
+            }
         }
-        Err(e) => Json(TerminalResponse {
-            output: format!("Failed to execute command: {}", e),
-        }),
-    }
+        "ps" => {
+            // Requirement: Route to internal process table or standard diagnostics
+            match tokio::process::Command::new("ps")
+                .args(["-ef"]) // Standard diagnostic flags for container-friendly output
+                .output()
+                .await
+            {
+                Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+                _ => {
+                    // Fallback to manual /proc scan if ps binary is missing (common in lean containers)
+                    #[cfg(target_os = "linux")]
+                    {
+                        let mut ps_out = format!("{:<8} {:<10} {}\n", "PID", "STATE", "COMMAND");
+                        if let Ok(entries) = std::fs::read_dir("/proc") {
+                            let mut pids: Vec<u32> = entries
+                                .flatten()
+                                .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
+                                .collect();
+                            pids.sort_unstable();
+
+                            for pid in pids {
+                                let comm = std::fs::read_to_string(format!("/proc/{}/comm", pid))
+                                    .unwrap_or_else(|_| "unknown".to_string())
+                                    .trim()
+                                    .to_string();
+                                let stat =
+                                    std::fs::read_to_string(format!("/proc/{}/stat", pid)).unwrap_or_default();
+                                let state = stat.split_whitespace().nth(2).unwrap_or("?");
+                                ps_out.push_str(&format!("{:<8} {:<10} {}\n", pid, state, comm));
+                            }
+                        }
+                        ps_out
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    "ps: standard diagnostics not available on this platform".to_string()
+                }
+            }
+        }
+        _ => {
+            // Standard execution for other whitelisted commands (ls, cat, ping, df)
+            match tokio::process::Command::new(cmd).args(args).output().await {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if out.status.success() {
+                        stdout.to_string()
+                    } else {
+                        format!(
+                            "Error (exit code {}):\n{}{}",
+                            out.status.code().unwrap_or(-1),
+                            stdout,
+                            stderr
+                        )
+                    }
+                }
+                Err(e) => format!("Failed to execute command: {}", e),
+            }
+        }
+    };
+
+    Json(TerminalResponse { output })
 }
