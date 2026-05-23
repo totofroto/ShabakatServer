@@ -29,6 +29,7 @@ pub struct AppState {
     pub devices: Arc<Mutex<Vec<DiscoveredDevice>>>,
     pub bandwidth: Arc<Mutex<Option<crate::types::RouterBandwidth>>>,
     pub system_telemetry: Arc<Mutex<Option<crate::types::SystemTelemetry>>>,
+    pub notifications: Arc<notifications::NotificationDispatcher>,
 }
 
 struct BroadcastLogger {
@@ -78,6 +79,7 @@ async fn main() {
         devices: Arc::new(Mutex::new(Vec::new())),
         bandwidth: Arc::new(Mutex::new(None)),
         system_telemetry: Arc::new(Mutex::new(None)),
+        notifications: Arc::new(notifications::NotificationDispatcher::new()),
     };
 
     // Background scan scheduler

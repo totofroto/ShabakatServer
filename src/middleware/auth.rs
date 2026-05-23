@@ -42,7 +42,7 @@ pub async fn auth_middleware(
     }
 
     // Check cookie or authorization header
-    let token = jar
+    let mut token = jar
         .get("admin_token")
         .map(|c| c.value().to_string())
         .or_else(|| {
@@ -52,6 +52,15 @@ pub async fn auth_middleware(
                 .and_then(|s| s.strip_prefix("Bearer "))
                 .map(|s| s.to_string())
         });
+
+    // Re-hydration layer: check database if token is missing
+    if token.is_none() {
+        if let Ok(Some(db_token)) = crate::storage::settings::get_setting(state.db.clone(), "active_admin_session").await {
+            if !db_token.is_empty() {
+                token = Some(db_token);
+            }
+        }
+    }
 
     let token = match token {
         Some(t) => t,

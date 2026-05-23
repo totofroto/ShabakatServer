@@ -4,7 +4,7 @@ use log::info;
 use libsql::params;
 use tokio::net::TcpStream;
 
-use crate::{notifications::telegram, storage, AppState};
+use crate::{storage, AppState};
 
 pub async fn start_outage_monitor(state: AppState) {
     info!("[OUTAGE_DETECTOR] Starting internet outage monitor");
@@ -26,11 +26,9 @@ pub async fn start_outage_monitor(state: AppState) {
                 ).await;
             }
 
-            if let (Some(tok), Some(cid)) =
-                (&state.config.telegram_bot_token, &state.config.telegram_chat_id)
-            {
-                let msg = format!("🔴 Internet down — {time_str} UTC");
-                telegram::send_telegram(tok, cid, &msg).await;
+            if state.config.telegram_bot_token.is_some() && state.config.telegram_chat_id.is_some() {
+                let msg = format!("🔴 <b>Internet down</b> — {} UTC", time_str);
+                state.notifications.broadcast_text(&state.config, &msg).await;
             }
         } else if was_down && reachable {
             was_down = false;
@@ -63,11 +61,9 @@ pub async fn start_outage_monitor(state: AppState) {
             let mins = duration_ms / 60_000;
             info!("[OUTAGE_DETECTOR] Internet UP — outage lasted {mins}m");
 
-            if let (Some(tok), Some(cid)) =
-                (&state.config.telegram_bot_token, &state.config.telegram_chat_id)
-            {
-                let msg = format!("🟢 Internet restored — {time_str} UTC ({mins} min outage)");
-                telegram::send_telegram(tok, cid, &msg).await;
+            if state.config.telegram_bot_token.is_some() && state.config.telegram_chat_id.is_some() {
+                let msg = format!("🟢 <b>Internet restored</b> — {} UTC ({} min outage)", time_str, mins);
+                state.notifications.broadcast_text(&state.config, &msg).await;
             }
         }
 

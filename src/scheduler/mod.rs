@@ -5,7 +5,6 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use crate::{
-    notifications::telegram,
     scanner,
     storage::{self, devices as dev_store, networks as net_store},
     types::ScanEvent,
@@ -126,15 +125,17 @@ pub async fn run(state: AppState) {
                         }
 
                         // Send Telegram alerts for newly discovered devices.
-                        if let (Some(tok), Some(cid)) = (
-                            &state.config.telegram_bot_token,
-                            &state.config.telegram_chat_id,
-                        ) {
-                            for (name, vendor, ip, mac) in &new_devices {
-                                let vendor_str = if vendor.is_empty() { "Unknown" } else { vendor.as_str() };
-                                let msg = format!("🆕 New device: {name} | {vendor_str} | {ip} | {mac}");
-                                telegram::send_telegram(tok, cid, &msg).await;
-                            }
+                        for (name, vendor, ip, mac) in &new_devices {
+                            let vendor_str = if vendor.is_empty() { "Unknown" } else { vendor.as_str() };
+                            let payload = crate::notifications::AlertPayload {
+                                title: "Intruder Alert".to_string(),
+                                mac: mac.clone(),
+                                ip: ip.clone(),
+                                vendor: vendor_str.to_string(),
+                                hostname: Some(name.clone()),
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                            };
+                            state.notifications.broadcast_alert(&state.config, &payload).await;
                         }
                     }
                     Err(e) => log::warn!("[SCHEDULER] Persistence failed: {e}"),

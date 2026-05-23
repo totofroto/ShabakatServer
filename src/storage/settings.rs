@@ -32,3 +32,18 @@ pub async fn get_all_settings(db: AppDb) -> Result<Value, String> {
 
     Ok(serde_json::Value::Object(map))
 }
+
+pub async fn get_setting(db: AppDb, key: &str) -> Result<Option<String>, String> {
+    let conn = db.connect().await?;
+    let mut rows = conn
+        .query("SELECT value FROM settings WHERE key = ?1", params![key])
+        .await
+        .map_err(|e| format!("get setting: {e}"))?;
+
+    if let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        let value: String = row.get(0).map_err(|e| e.to_string())?;
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
+}

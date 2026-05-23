@@ -166,7 +166,7 @@ pub async fn google_callback(
 
     // Set cookie
     let is_secure = redirect_uri.starts_with("https");
-    let cookie = Cookie::build(("admin_token", token))
+    let cookie = Cookie::build(("admin_token", token.clone()))
         .path("/")
         .http_only(true)
         .secure(is_secure)
@@ -174,10 +174,26 @@ pub async fn google_callback(
         .expires(time::OffsetDateTime::from_unix_timestamp(expiration.timestamp()).unwrap())
         .build();
 
-    (jar.add(cookie), Redirect::to("/settings")).into_response()
+    // Persist session for re-hydration
+    if let Err(e) = crate::storage::settings::set_setting(
+        state.db.clone(),
+        "active_admin_session".to_string(),
+        token,
+    ).await {
+        log::error!("Failed to persist admin session: {}", e);
+    }
+
+    (jar.add(cookie), Redirect::to("/")).into_response()
 }
 
-pub async fn logout(jar: CookieJar) -> impl IntoResponse {
+pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoResponse {
+    // Clear persisted session
+    let _ = crate::storage::settings::set_setting(
+        state.db.clone(),
+        "active_admin_session".to_string(),
+        "".to_string(),
+    ).await;
+
     let cookie = Cookie::build(("admin_token", ""))
         .path("/")
         .max_age(time::Duration::ZERO)
@@ -189,7 +205,16 @@ pub async fn me(
     jar: CookieJar,
     State(state): State<AppState>,
 ) -> Result<Json<Claims>, (axum::http::StatusCode, String)> {
-    let token = jar.get("admin_token").map(|c| c.value().to_string());
+    let mut token = jar.get("admin_token").map(|c| c.value().to_string());
+
+    // Re-hydration layer: check database if token is missing
+    if token.is_none() {
+        if let Ok(Some(db_token)) = crate::storage::settings::get_setting(state.db.clone(), "active_admin_session").await {
+            if !db_token.is_empty() {
+                token = Some(db_token);
+            }
+        }
+    }
 
     if let Some(token) = token {
         let decoding_key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());

@@ -129,7 +129,7 @@ pub async fn trigger_scan(
 
                             // Broadcast live intruder alerts for the UI
                             let timestamp = crate::storage::now_ms();
-                            for (name, _vendor, ip, mac) in new_devices {
+                            for (name, vendor, ip, mac) in new_devices {
                                 let _ = broadcast_tx.send(json!({
                                     "type": "new-device",
                                     "payload": {
@@ -139,6 +139,22 @@ pub async fn trigger_scan(
                                         "ip": ip,
                                     }
                                 }));
+
+                                // Send professional structured alerts
+                                let vendor_str = if vendor.is_empty() { "Unknown" } else { vendor.as_str() };
+                                let payload = crate::notifications::AlertPayload {
+                                    title: "Intruder Alert".to_string(),
+                                    mac: mac.clone(),
+                                    ip: ip.clone(),
+                                    vendor: vendor_str.to_string(),
+                                    hostname: Some(name.clone()),
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                };
+                                let n_dispatcher = state.notifications.clone();
+                                let n_config = state.config.clone();
+                                tokio::spawn(async move {
+                                    n_dispatcher.broadcast_alert(&n_config, &payload).await;
+                                });
                             }
                         }
                         Err(e) => {
