@@ -13,9 +13,8 @@ import { DnsProvider } from "@/types";
 import { Plus, Trash2, ShieldCheck, Power, Palette, Upload, Check, LogIn, ShieldAlert } from "lucide-react";
 
 export function SettingsPage() {
-  const { lang, dict } = useLanguage();
+  const { dict } = useLanguage();
   const { user } = useAuth();
-  const t = (key: string) => (dict as any)[key] || key;
 
   const [providers, setProviders] = useState<DnsProvider[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});

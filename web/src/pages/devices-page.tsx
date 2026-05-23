@@ -38,7 +38,6 @@ import {
   type DeviceRow,
   type ScanMode,
 } from "@/hooks/useNetworkScan";
-import arStrings from "@/i18n/ar.json";
 import { cn } from "@/lib/utils";
 
 const UI: Record<string, { en: string; ar: string; de?: string }> = {
@@ -1277,13 +1276,9 @@ export function DevicesPage() {
   const radarFabClassName = "bg-accent hover:bg-accent-hover";
   const progressMode = activeScanMode ?? scanMode;
   const progressModeLabel =
-    lang === "ar"
-      ? progressMode === "silent"
-        ? arStrings.devices.silentModeBadge
-        : arStrings.devices.aggressiveModeBadge
-      : progressMode === "silent"
-        ? t("silentModeBadge")
-        : t("aggressiveModeBadge");
+    progressMode === "silent"
+      ? t("silentModeBadge")
+      : t("aggressiveModeBadge");
 
   // ── Hardware back button interception ────────────────────────────────────────
   // Push a dummy history entry whenever the user enters a sub-state (device

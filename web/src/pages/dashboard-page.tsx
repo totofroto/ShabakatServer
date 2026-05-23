@@ -85,7 +85,7 @@ function NetworkHealthDisplay({
   score: number;
   hasNetworkScoreData: boolean;
 }) {
-  const { lang, dict } = useLanguage();
+  const { dict } = useLanguage();
   const t = (key: string) => (dict as any)[key] || key;
 
   const displayScore = hasNetworkScoreData ? Math.min(Math.max(score, 0), 100) : 0;
@@ -391,7 +391,7 @@ function OutageHistoryCard({ outages }: { outages: Outage[] }) {
 type ApiNetwork = { ssid: string | null; gateway: string | null };
 
 export function DashboardPage() {
-  const { lang, dict } = useLanguage();
+  const { dict } = useLanguage();
   const t = (key: string) => (dict as any)[key] || key;
   const [wifiInfo, setWifiInfo] = useState<WifiInfoPayload | null>(null);
   const [apiNetwork, setApiNetwork] = useState<ApiNetwork | null>(null);
@@ -482,21 +482,21 @@ export function DashboardPage() {
 
     if (offlineUi) {
       return {
-        label: (UI.offline as any)[lang] || UI.offline.en,
+        label: dict.offline,
         className: "border-error/40 bg-error/10 text-error",
       };
     }
     if (connectionType === "wifi" || connectionType === "ethernet") {
       return {
-        label: (UI.online as any)[lang] || UI.online.en,
+        label: dict.online,
         className: "border-online/30 bg-online/10 text-online",
       };
     }
     return {
-      label: ((UI as any).unknown)[lang] || UI.unknown.en,
+      label: dict.unknown,
       className: "border-separator bg-surface-alt text-secondary",
     };
-  }, [networkState, lanScanAllowed, lang]);
+  }, [networkState, lanScanAllowed, dict]);
 
   const onlineDevices = useMemo(
     () => devices.filter((device) => {

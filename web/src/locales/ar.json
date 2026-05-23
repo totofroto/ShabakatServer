@@ -28,7 +28,7 @@
   "engineStandby": "المحرك في وضع الاستعداد",
   "engineActive": "محرك الفحص نشط",
   "routerHook": "فتح تسجيل دخول الراوتر",
-  "addProvider": "إضافة مزود",
+  "addProvider": "حفظ المزود",
   "providerPort": "منفذ المزود",
   "enableAdGuard": "تفعيل AdGuard",
   "adminAuthentication": "مصادقة المسؤول",
@@ -47,14 +47,12 @@
   "disabled": "معطل",
   "settingsDesc": "قم بضبط سلوك الفحص والإشعارات.",
   "personalizationTitle": "التخصيص",
-  "personalizationDesc": "قم بضبط الخلفية والخبرة البصرية الخاصة بك.",
   "backdropVoid": "الفراغ الأسود الحقيقي",
   "backdropGray": "الرمادي التكتيكي الغامق",
   "backdropCustom": "مخطط مخصص",
   "uploadWallpaper": "تحميل خلفية مخصصة",
   "dnsTitle": "مراقبة DNS",
   "dnsDesc": "إدارة AdGuard Home أو مزودي DNS الآخرين لإحصائيات أمان الأجهزة.",
-  "addProvider": "حفظ المزود",
   "providerName": "الاسم (مثلاً AdGuard المنزلي)",
   "providerIp": "عنوان IP",
   "providerUser": "اسم المستخدم (اختياري)",
@@ -99,7 +97,17 @@
   "notMeasuredShort": "غير مقيَّس",
   "deductsNote": "يُخصم 5 نقاط لكل بائع مجهول أو MAC عشوائي في آخر فحص.",
   "internetHealth": "صحة الإنترنت",
+  "internetOnline": "✅ متصل",
+  "internetDown": "🔴 انقطاع منذ {time}",
+  "lastOutage": "آخر انقطاع: {min} دقيقة، قبل {days} أيام",
+  "noOutages": "لم يتم تسجيل أي انقطاعات",
   "runSpeedTest": "تشغيل اختبار السرعة",
   "testing": "جارٍ الاختبار…",
-  "scoreBreakdown": "تفصيل الدرجة"
+  "scoreBreakdown": "تفصيل الدرجة",
+  "tabs": {
+    "home": "الرئيسية",
+    "dnsStats": "إحصائيات DNS",
+    "timelineLog": "سجل الأحداث",
+    "back": "عودة"
+  }
 }

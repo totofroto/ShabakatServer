@@ -28,7 +28,7 @@
   "engineStandby": "Engine Standby",
   "engineActive": "Scanning Engine Active",
   "routerHook": "Open Router Login",
-  "addProvider": "Add Provider",
+  "addProvider": "Save Provider",
   "providerPort": "Provider Port",
   "enableAdGuard": "Enable AdGuard",
   "adminAuthentication": "Admin Authentication",
@@ -47,14 +47,12 @@
   "disabled": "Disabled",
   "settingsDesc": "Configure scanner behavior and notifications.",
   "personalizationTitle": "Personalization",
-  "personalizationDesc": "Configure your backdrop and visual experience.",
   "backdropVoid": "True Black Void",
   "backdropGray": "Tactical Dark Gray",
   "backdropCustom": "Custom Blueprint",
   "uploadWallpaper": "Upload Custom Blueprint Wallpaper",
   "dnsTitle": "DNS Monitoring",
   "dnsDesc": "Manage AdGuard Home or other DNS providers for device security stats.",
-  "addProvider": "Save Provider",
   "providerName": "Name (e.g. Home AdGuard)",
   "providerIp": "IP Address",
   "providerUser": "Username (optional)",
@@ -99,7 +97,17 @@
   "notMeasuredShort": "not measured",
   "deductsNote": "Deducts 5 points per unknown vendor or randomized MAC found in the latest scan.",
   "internetHealth": "Internet Health",
+  "internetOnline": "✅ Online",
+  "internetDown": "🔴 Outage since {time}",
+  "lastOutage": "Last outage: {min} min, {days} days ago",
+  "noOutages": "No outages recorded",
   "runSpeedTest": "Run Speed Test",
   "testing": "Testing…",
-  "scoreBreakdown": "Score Breakdown"
+  "scoreBreakdown": "Score Breakdown",
+  "tabs": {
+    "home": "Home",
+    "dnsStats": "DNS Stats",
+    "timelineLog": "Timeline Log",
+    "back": "Back"
+  }
 }
