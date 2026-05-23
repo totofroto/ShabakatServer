@@ -106,7 +106,8 @@ async fn main() {
     let mut app = api::router(state);
 
     // Serve custom assets
-    app = app.nest_service("/uploads", ServeDir::new("data/assets"));
+    let uploads_dir = format!("{}/assets", config.data_dir);
+    app = app.nest_service("/uploads", ServeDir::new(uploads_dir));
 
     // Serve React frontend if SHABAKAT_WEB_DIR is set
     if let Some(ref web_dir) = config.web_dir {

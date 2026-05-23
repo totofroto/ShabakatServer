@@ -7,69 +7,82 @@ use axum::{
 use serde_json::json;
 use std::path::Path;
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 
+/// Handles multipart file upload for assets.
+/// Specifically saves the uploaded file as 'blueprint.jpg' in the assets directory.
 pub async fn upload_asset(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let mut file_path = String::new();
+    // Ensure assets directory exists within data_dir
+    let assets_dir = format!("{}/assets", state.config.data_dir);
+    if let Err(e) = std::fs::create_dir_all(&assets_dir) {
+        log::error!("Failed to create assets directory '{}': {}", assets_dir, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "Failed to initialize storage" })),
+        )
+            .into_response();
+    }
 
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+    while let Ok(Some(mut field)) = multipart.next_field().await {
         let name = field.name().unwrap_or_default().to_string();
-        let name_attr = field.file_name().unwrap_or_default().to_string();
 
         if name == "file" {
-            let data = field.bytes().await.unwrap_or_default();
+            let dest_path = Path::new(&assets_dir).join("blueprint.jpg");
             
-            // Limit size to 2MB
-            if data.len() > 2 * 1024 * 1024 {
-                return (StatusCode::PAYLOAD_TOO_LARGE, "File too large").into_response();
+            // Open file for writing
+            let mut file = match fs::File::create(&dest_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    log::error!("Failed to create file {:?}: {}", dest_path, e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "Failed to create destination file" })),
+                    )
+                        .into_response();
+                }
+            };
+
+            // Stream the field content into the file
+            while let Ok(Some(chunk)) = field.chunk().await {
+                if let Err(e) = file.write_all(&chunk).await {
+                    log::error!("Error writing to file {:?}: {}", dest_path, e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "Failed to save file data" })),
+                    )
+                        .into_response();
+                }
             }
 
-            // Validate image signature (PNG/JPG)
-            if !is_image(&data) {
-                return (StatusCode::BAD_REQUEST, "Only PNG and JPG images are allowed").into_response();
+            if let Err(e) = file.flush().await {
+                log::error!("Error flushing file {:?}: {}", dest_path, e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "Failed to finalize file" })),
+                )
+                    .into_response();
             }
 
-            let ext = Path::new(&name_attr)
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("bin");
-            
-            let file_name = format!("{}.{}", uuid::Uuid::new_v4(), ext);
-            let dest = format!("data/assets/{}", file_name);
-            
-            if let Err(e) = fs::write(&dest, data).await {
-                return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save file: {}", e)).into_response();
-            }
-            
-            file_path = format!("/uploads/{}", file_name);
+            log::info!("Successfully uploaded asset to {:?}", dest_path);
+            return (
+                StatusCode::OK,
+                Json(json!({ 
+                    "status": "success",
+                    "url": "/uploads/blueprint.jpg"
+                })),
+            )
+                .into_response();
         }
     }
 
-    if file_path.is_empty() {
-        return (StatusCode::BAD_REQUEST, "No file uploaded").into_response();
-    }
-
-    (StatusCode::OK, Json(json!({ "url": file_path }))).into_response()
-}
-
-fn is_image(data: &[u8]) -> bool {
-    if data.len() < 4 {
-        return false;
-    }
-    
-    // PNG: 89 50 4E 47
-    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        return true;
-    }
-    
-    // JPEG: FF D8 FF
-    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return true;
-    }
-    
-    false
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "No 'file' field found in multipart form" })),
+    )
+        .into_response()
 }
