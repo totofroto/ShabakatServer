@@ -1,5 +1,6 @@
 pub mod history;
 pub mod devices;
+pub mod compactor;
 pub mod metrics;
 pub mod migrations;
 pub mod networks;

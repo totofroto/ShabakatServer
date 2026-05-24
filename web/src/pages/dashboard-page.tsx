@@ -204,7 +204,9 @@ function NocStatusBar({
         </span>
         <span className="text-secondary">Scan: {lastScanAgo}</span>
       </div>
-      <span className="font-mono text-[10px] font-bold tracking-widest text-tertiary">NODE-01 · 192.168.254.18</span>
+      <span className="font-mono text-[10px] font-bold tracking-widest text-tertiary">
+        NODE-01 · {window.location.hostname}
+      </span>
     </div>
   );
 }

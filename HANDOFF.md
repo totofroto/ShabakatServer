@@ -1,54 +1,47 @@
-# PROJECT HANDOFF & ARCHITECTURE SYNC
-**Date:** May 21, 2026
-**System Status:** V1 Audit Remediations Pending
+# PROJECT HANDOFF & ARCHITECTURE SYNC (V1.4.0)
+**Date:** May 24, 2026
+**System Status:** Container-hardened Network-Agnostic Passive Digital Fence and Trait-Based Notification Hub are 100% LIVE.
 
 ## 1. Core Architecture (The Stack)
-* **Backend:** Rust (Axum, Tokio) running as a Docker container.
-* **Database:** SQLite via `libSQL` crate (WAL mode enabled).
-* **Frontend:** React + TypeScript (Vite).
+*   **Backend:** Rust (Axum, Tokio) — High-concurrency async engine.
+*   **Database:** SQLite via `libSQL` crate (WAL mode + `busy_timeout = 5000` enforced).
+*   **Frontend:** React + TypeScript (Vite) — GPU-accelerated Canvas for topology.
+*   **Network Engine:** ARP-Scan + ICMP-Ping + **Passive Digital Fence (mDNS/SSDP)**.
 
-## 2. Infrastructure Constraints & Security Mandates (DO NOT VIOLATE)
-* **RULE 1: NO INLINE BRIDGING / SPOOFING.** Must remain out-of-band.
-* **RULE 2: STRICT DB BATCHING.** All database writes during a scan must be wrapped in an explicit transaction block (`BEGIN` / `COMMIT`). Double-writing inside the scanning loop and the scheduler is strictly forbidden. Background tasks must not hold the global DB connection lock open while performing async operations (`yield`).
-* **RULE 3: AUTHENTICATION INTEGRITY.** - **Google OAuth:** MUST enforce a strict admin email allowlist (`tarekshek@gmail.com`). 
-  - **CSRF Protection:** State parameter MUST be generated, passed, and validated during OAuth exchanges.
-  - **No Header Bypasses:** local auth bypass logic must NEVER trust forgeable HTTP headers like `X-Forwarded-For` or `X-Real-IP`.
-  - **JWT Hardening:** Default fallback secrets are banned; the server must panic at startup if `JWT_SECRET` is missing. Cookies must enforce `secure: true` when running outside development.
+## 2. Security Mandates (Non-Negotiable)
+*   **RULE 1: OUT-OF-BAND ONLY.** No inline bridging or spoofing. The server acts as a passive observer and active prober.
+*   **RULE 2: ATOMIC PERSISTENCE.** All DB writes during scans must be fire-and-forget (`tokio::spawn`) to prevent UI blocking.
+*   **RULE 3: KERNEL INTEGRITY.** Direct file access to `/proc` is preferred over spawning shell binaries.
+*   **RULE 4: NETWORK AGNOSTICISM.** Avoid hardcoded IP ranges. Always use dynamic subnet detection for filtering.
 
-## 3. Current Focus: Remediation Phase
-* We are systemically fixing the 4 Critical and 5 High-severity issues discovered during the V1 Audit Report to secure and stabilize the Command Center.
-
-## 4. Scan Pipeline Regression — Diagnosed & Fixed (May 21, 2026)
-
-**Symptom:** Scan hung at 95%, returned 0 devices, `TypeError: n.slice is not a function` in browser console, UI completely frozen (no cancel, no logout).
-
-**Root Causes Found:**
-
-| # | File | Bug | Fix |
-|---|---|---|---|
-| 1 | `src/api/scan.rs` | `scan_finished` broadcast was awaited AFTER `complete_scan_persistence` — any DB lag caused a 140s UI freeze | Broadcast `scan_finished` first; run persistence in `tokio::spawn` (fire-and-forget) |
-| 2 | `src/api/scan.rs` | Backend emitted `"scan_error"` event, frontend listened for `"scan_failed"` — engine errors never unblocked the UI | Renamed event to `"scan_failed"` |
-| 3 | `src/storage/devices.rs` | Dedicated DB connection had no `busy_timeout` pragma — WAL write contention caused immediate `SQLITE_BUSY` failure | Added `PRAGMA busy_timeout = 5000` as first statement on dedicated conns |
-| 4 | `web/src/lib/transport.ts` | `scan_network` Promise had no `scan_failed` listener — engine errors left it unresolved until 140s timeout | Added `wsListen("scan_failed")` that immediately rejects with the error |
-| 5 | `web/src/lib/transport.ts` | `scan_status` command had no REST mapping — browser-mode hydration silently skipped the scan-active guard | Added `scan_status` → `GET /api/scan/status` |
-| 6 | `web/src/hooks/useNetworkScan.ts` | `finally` block did not call `setProgressPct(0)` — UI could freeze at 95% on any abort path | Added `setProgressPct(0)` to `finally` |
-| 7 | `web/src/hooks/useNetworkScan.ts` / `transport.ts` | `data.devices ?? []` could pass an error object to `.slice`/`.map` — caused the `TypeError` | Replaced with `Array.isArray(data.devices) ? data.devices : []` everywhere |
-
-## 5. Infrastructure Telemetry Enhancements — Phases 1, 2, 3 (Completed May 23, 2026)
-
-**Goal:** Absorbing the feature sets of Uptime Kuma, Netdata, Prometheus, and Grafana into our native headless server architecture to eliminate dependency overhead.
-
-**Status: 100% COMPLETED, COMPILED, AND DEPLOYED.**
+## 3. Infrastructure Telemetry — Phases 1-4 (100% Complete)
+**Goal:** Elimination of external dependencies (Uptime Kuma, Netdata, Prometheus).
 
 | Component | Status | Implementation Detail |
 |---|---|---|
-| **Phase 1: Real-time Metrics** | COMPLETED | Absorbed Netdata-style high-frequency system telemetry (CPU, RAM, Disk, Load) into `src/monitor/sys_metrics.rs`. |
-| **Phase 2: Uptime & Detection** | COMPLETED | Absorbed Uptime Kuma monitoring and `outage_detector.rs` for internet connectivity tracking. |
-| **Phase 3: Persistence & Viz** | COMPLETED | Absorbed Prometheus-style time-series storage via SQLite/libSQL. Compactor worker thread (`compactor.rs`) handles leveled metrics aging. |
+| **Phase 1: Real-time Metrics** | LIVE | High-frequency system telemetry via `src/monitor/sys_metrics.rs`. |
+| **Phase 2: Uptime & Detection** | LIVE | Trait-Based Notification Hub, Active Verification Route `/api/tools/test-notification`. |
+| **Phase 3: Persistence & Viz** | LIVE | Leveled time-series metrics aging via `compactor.rs` worker thread. |
+| **Phase 4: Digital Fence** | LIVE | Network-Agnostic Passive Digital Fence with Dynamic Subnet Detection tracking mDNS (5353) and SSDP (1900). |
 
-**Deployment Verification:**
-- **Static Assets:** React frontend compiled cleanly via `npm run build`.
-- **Backend Integrity:** `cargo check` verified structural soundness.
-- **Docker Compose:** Deployed via `docker compose up -d --build`.
-- **Health Check:** Server listening on `http://0.0.0.0:7779` with all monitor loops (Scoring, SysMetrics, OutageDetector) active.
-- **Protocol Sync:** Standardized `isTauri()` usage across `transport.ts` and UI components to ensure seamless cross-platform telemetry stream binding.
+## 4. Shipped Milestones (May 24, 2026)
+
+### 1) Passive Digital Fence Sentry Engine
+*   **File:** `src/scanner/digital_fence.rs`
+*   **Logic:** Continuous background listeners for multicast chatter on ports 5353 (mDNS) and 1900 (SSDP).
+*   **Integration:** Matches ambient IP packets to Layer 2 MAC signatures via `/proc/net/arp` tracing.
+*   **Impact:** Updates `last_seen` timestamps silently without generating active probe traffic.
+
+### 2) Dynamic Subnet Boundary Detection
+*   **File:** `src/scanner/network.rs` / `src/scanner/mod.rs`
+*   **Feature:** Automatically identifies the local network CIDR using UDP-connect tricks and interface lookups.
+*   **Benefit:** Zero-config deployment on any network; removes all hardcoded `192.168.254.x` references.
+
+### 3) Shared WebSocket Event Model
+*   **Logic:** Digital Fence events (`latency_update` with synthetic 0.1ms flag) are pushed directly to the React D3 Star-Map.
+*   **UI:** Devices "glow" or pulse on the map the moment they broadcast ambient traffic.
+
+## 5. Deployment Verification
+*   **Node IP:** Dynamic (Verified on WADDAN: `192.168.254.18`).
+*   **Git State:** `feat: deploy container-hardened passive digital fence monitoring via multicast table tracing`.
+*   **Container Caps:** Requires `NET_RAW` and `NET_ADMIN` for ARP tracing and ICMP.

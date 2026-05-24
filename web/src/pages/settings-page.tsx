@@ -11,6 +11,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useAuth } from "@/context/AuthContext";
 import { DnsProvider } from "@/types";
 import { Plus, Trash2, ShieldCheck, Power, Palette, Upload, Check, LogIn, ShieldAlert } from "lucide-react";
+import { NotificationHubSettings } from "@/components/notification-hub-settings";
 
 export function SettingsPage() {
   const { dict } = useLanguage();
@@ -145,7 +146,9 @@ export function SettingsPage() {
   };
 
   const handleHardcodedLogin = () => {
-    window.location.href = "http://192.168.254.18.nip.io:7779/api/auth/google/login";
+    // Dynamically derive the API base URL from the current window location
+    const apiBase = window.location.origin;
+    window.location.href = `${apiBase}/api/auth/google/login`;
   };
 
   const handleLogout = async () => {
@@ -403,6 +406,9 @@ export function SettingsPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Notification Hub Settings Block */}
+      <NotificationHubSettings />
 
       <Card>
         <CardHeader>

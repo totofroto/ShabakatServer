@@ -7,10 +7,36 @@ use axum::{
 use dns_lookup::{lookup_addr, lookup_host};
 use ipnet::Ipv4Net;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 fn err500(msg: impl ToString) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg.to_string()})))
+}
+
+// ── POST /api/tools/test-notification ────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct TestNotificationReq {
+    pub id: String,
+    pub config: Value,
+}
+
+pub async fn test_notification(Json(body): Json<TestNotificationReq>) -> impl IntoResponse {
+    let provider: Option<Box<dyn crate::notifications::NotificationProvider>> = match body.id.as_str() {
+        "telegram" => Some(Box::new(crate::notifications::telegram::TelegramProvider)),
+        "smtp" => Some(Box::new(crate::notifications::smtp::SmtpProvider)),
+        "webhook_ntfy" => Some(Box::new(crate::notifications::webhook::WebhookProvider)),
+        _ => None,
+    };
+
+    if let Some(p) = provider {
+        match p.dispatch("Shabakat Test", "This is a connection verification message from your Shabakat Passive Sentry Hub.", &body.config).await {
+            Ok(_) => (StatusCode::OK, "Test message dispatched successfully").into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Provider error: {}", e)).into_response(),
+        }
+    } else {
+        (StatusCode::BAD_REQUEST, "Unknown provider ID").into_response()
+    }
 }
 
 // ── POST /api/tools/ping ─────────────────────────────────────────────────────

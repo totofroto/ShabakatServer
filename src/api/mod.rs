@@ -6,6 +6,7 @@ pub mod debug;
 pub mod devices;
 pub mod history;
 pub mod networks;
+pub mod notifications;
 pub mod outages;
 pub mod providers;
 pub mod scan;
@@ -33,7 +34,6 @@ pub fn router(state: AppState) -> Router {
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8080",
-        "http://192.168.254.18.nip.io:7779",
     ];
 
     let mut cors = CorsLayer::new()
@@ -65,7 +65,8 @@ pub fn router(state: AppState) -> Router {
         .route("/whois", post(tools::whois))
         .route("/ip-geo", post(tools::ip_geo))
         .route("/mac-lookup", post(tools::mac_lookup))
-        .route("/headers", post(tools::headers));
+        .route("/headers", post(tools::headers))
+        .route("/test-notification", post(tools::test_notification));
 
     let api = Router::new()
         .route("/system-status", get(dashboard::get_system_status))
@@ -89,9 +90,7 @@ pub fn router(state: AppState) -> Router {
         .route("/speed-test/history", get(speed_test::speed_test_history))
         .route("/scan", post(scan::trigger_scan))
         .route("/scan/status", get(scan::scan_status))
-        .route("/history", get(history::list_history))
-        .route("/events", get(history::list_events))
-        .route("/devices/:mac/history", get(history::get_device_history))
+        .route("/history", get(history::get_history))
         .route("/dns/providers", get(providers::list_providers))
         .route("/dns/providers", post(providers::add_provider))
         .route("/dns/providers/:id", patch(providers::patch_provider))
@@ -99,6 +98,8 @@ pub fn router(state: AppState) -> Router {
         .route("/assets/upload", post(assets::upload_asset))
         .route("/settings", get(settings::get_settings))
         .route("/settings", post(settings::update_setting))
+        .route("/notifications/config", get(notifications::get_notification_config))
+        .route("/notifications/config", post(notifications::update_notification_config))
         .nest("/tools", tool_routes)
         .nest("/auth", auth_routes)
         .layer(middleware::from_fn_with_state(

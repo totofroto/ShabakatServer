@@ -142,18 +142,27 @@ pub async fn trigger_scan(
 
                                 // Send professional structured alerts
                                 let vendor_str = if vendor.is_empty() { "Unknown" } else { vendor.as_str() };
-                                let payload = crate::notifications::AlertPayload {
-                                    title: "Intruder Alert".to_string(),
-                                    mac: mac.clone(),
-                                    ip: ip.clone(),
-                                    vendor: vendor_str.to_string(),
-                                    hostname: Some(name.clone()),
-                                    timestamp: chrono::Utc::now().to_rfc3339(),
-                                };
-                                let n_dispatcher = state.notifications.clone();
-                                let n_config = state.config.clone();
+                                let body = format!(
+                                    "MAC: {}\nIP: {}\nVendor: {}\nName: {}\nDetected At: {}",
+                                    mac, ip, vendor_str, name, chrono::Utc::now().to_rfc3339()
+                                );
+                                
+                                // 1. Log the breach into the historical event registry
+                                let db_clone = state.db.clone();
+                                let mac_clone = mac.clone();
                                 tokio::spawn(async move {
-                                    n_dispatcher.broadcast_alert(&n_config, &payload).await;
+                                    crate::storage::history::log_event(
+                                        &db_clone, 
+                                        "intruder", 
+                                        None, 
+                                        &format!("Breach detected! Unknown address: {}", mac_clone)
+                                    ).await;
+                                });
+
+                                let n_dispatcher = state.notifications.clone();
+                                let db = state.db.clone();
+                                tokio::spawn(async move {
+                                    n_dispatcher.broadcast_alert(&db, "Intruder Alert", &body).await;
                                 });
                             }
                         }

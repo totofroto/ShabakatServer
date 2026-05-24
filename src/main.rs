@@ -88,6 +88,9 @@ async fn main() {
     // Background scoring task
     tokio::spawn(dashboard::scoring::run(state.clone()));
 
+    // Passive Digital Fence Ambient Sentry
+    crate::scanner::digital_fence::DigitalFence::start(state.db.clone(), state.broadcast_tx.clone());
+
     // Internet outage monitor
     tokio::spawn(monitor::outage_detector::start_outage_monitor(state.clone()));
 
@@ -100,8 +103,10 @@ async fn main() {
     // Passive mDNS presence monitor
     tokio::spawn(monitor::presence::run_presence_monitor(state.clone()));
 
-    // Metrics compactor (4-hour cycle)
-    tokio::spawn(monitor::compactor::run_metrics_compactor(state.clone()));
+    // Start the Prometheus-Style Relational Compactor Loop
+    crate::storage::compactor::MetricsCompactor::start(state.db.clone());
+
+    log::info!("[FLIGHT_RECORDER] Storage compaction pipelines are active.");
 
     let mut app = api::router(state);
 

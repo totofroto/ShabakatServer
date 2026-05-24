@@ -102,3 +102,10 @@ CREATE TABLE IF NOT EXISTS system_status (
     security_score    INTEGER NOT NULL,
     last_updated      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS notification_providers (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER DEFAULT 0,
+    config_json TEXT NOT NULL
+);

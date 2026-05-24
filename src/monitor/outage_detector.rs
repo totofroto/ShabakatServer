@@ -26,10 +26,16 @@ pub async fn start_outage_monitor(state: AppState) {
                 ).await;
             }
 
-            if state.config.telegram_bot_token.is_some() && state.config.telegram_chat_id.is_some() {
-                let msg = format!("🔴 <b>Internet down</b> — {} UTC", time_str);
-                state.notifications.broadcast_text(&state.config, &msg).await;
-            }
+            // 1. Log the outage into the unified historical event registry
+            crate::storage::history::log_event(
+                &state.db, 
+                "outage", 
+                None, 
+                "WAN gateway connectivity failure detected."
+            ).await;
+
+            let msg = format!("🔴 <b>Internet down</b> — {} UTC", time_str);
+            state.notifications.broadcast_alert(&state.db, "Network Outage", &msg).await;
         } else if was_down && reachable {
             was_down = false;
             let time_str = format_hhmm_utc(now);
@@ -61,10 +67,16 @@ pub async fn start_outage_monitor(state: AppState) {
             let mins = duration_ms / 60_000;
             info!("[OUTAGE_DETECTOR] Internet UP — outage lasted {mins}m");
 
-            if state.config.telegram_bot_token.is_some() && state.config.telegram_chat_id.is_some() {
-                let msg = format!("🟢 <b>Internet restored</b> — {} UTC ({} min outage)", time_str, mins);
-                state.notifications.broadcast_text(&state.config, &msg).await;
-            }
+            // 1. Log the restoration into the unified historical event registry
+            crate::storage::history::log_event(
+                &state.db, 
+                "restored", 
+                None, 
+                &format!("WAN gateway connectivity restored. Total downtime: {} minutes.", mins)
+            ).await;
+
+            let msg = format!("🟢 <b>Internet restored</b> — {} UTC ({} min outage)", time_str, mins);
+            state.notifications.broadcast_alert(&state.db, "Network Restored", &msg).await;
         }
 
         tokio::time::sleep(Duration::from_secs(60)).await;

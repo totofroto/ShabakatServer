@@ -1,102 +1,84 @@
-use serde::{Deserialize, Serialize};
-use log::{info, error};
-use crate::config::Config;
+use async_trait::async_trait;
+use serde_json::Value;
+use crate::storage::AppDb;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlertPayload {
-    pub title: String,
-    pub mac: String,
-    pub ip: String,
-    pub vendor: String,
-    pub hostname: Option<String>,
-    pub timestamp: String,
+pub mod telegram;
+pub mod smtp;
+pub mod webhook;
+
+#[async_trait]
+pub trait NotificationProvider: Send + Sync {
+    /// Dispatches a formatted structural text string over the specific channel
+    async fn dispatch(&self, title: &str, body: &str, config: &Value) -> Result<(), String>;
 }
 
-pub struct NotificationDispatcher {
-    client: reqwest::Client,
-}
+pub struct NotificationDispatcher;
 
 impl NotificationDispatcher {
     pub fn new() -> Self {
-        Self {
-            // Instantiate an optimized, connection-pooled client framework
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .unwrap_or_default(),
-        }
+        Self
     }
 
-    /// Dispatches structured alerts across all configured channels simultaneously
-    pub async fn broadcast_alert(&self, config: &Config, payload: &AlertPayload) {
-        let msg = format!(
-            "🔴 <b>{}</b>\n\n\
-             <b>MAC:</b> <code>{}</code>\n\
-             <b>IP:</b> {}\n\
-             <b>Vendor:</b> {}\n\
-             <b>Hostname:</b> {}\n\
-             <b>Detected At:</b> {}\n\n\
-             <i>Shabakat Server Engine · Monitoring Live</i>",
-            payload.title,
-            payload.mac,
-            payload.ip,
-            payload.vendor,
-            payload.hostname.as_deref().unwrap_or("Unknown"),
-            payload.timestamp
-        );
+    /// Compatibility wrapper for the new trait-based system
+    pub async fn broadcast_alert(&self, db: &AppDb, title: &str, body: &str) {
+        broadcast_alert(db, title, body).await;
+    }
 
-        self.broadcast_text(config, &msg).await;
+    pub async fn broadcast_text(&self, db: &AppDb, body: &str) {
+        broadcast_alert(db, "System Alert", body).await;
+    }
+}
 
-        // Expose support for Generic Webhooks (Ntfy, Discord, Slack, etc.)
-        if let Some(webhook_url) = config.webhook_url.clone() {
-            let w_client = self.client.clone();
-            let w_payload = payload.clone();
+/// Dynamic alert broker that reads live database states and broadcasts alerts to all active vectors
+pub async fn broadcast_alert(db: &AppDb, title: &str, body: &str) {
+    let conn = match db.connect().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[FLIGHT_RECORDER] Failed to acquire DB connection for broadcast: {}", e);
+            return;
+        }
+    };
+    
+    // Fetch all enabled providers from the SQLite registry
+    let mut stmt = match conn.prepare("SELECT id, config_json FROM notification_providers WHERE enabled = 1").await {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("[FLIGHT_RECORDER] Failed to prepare notification broadcast query: {}", e);
+            return;
+        }
+    };
+
+    let mut rows = match stmt.query(libsql::params![]).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("[FLIGHT_RECORDER] Failed to read active alert providers: {}", e);
+            return;
+        }
+    };
+
+    while let Ok(Some(row)) = rows.next().await {
+        let provider_id: String = row.get(0).unwrap_or_default();
+        let config_str: String = row.get(1).unwrap_or_default();
+        let config_json: Value = serde_json::from_str(&config_str).unwrap_or(Value::Null);
+
+        let provider: Option<Box<dyn NotificationProvider>> = match provider_id.as_str() {
+            "telegram" => Some(Box::new(telegram::TelegramProvider)),
+            "smtp" => Some(Box::new(smtp::SmtpProvider)),
+            "webhook_ntfy" => Some(Box::new(webhook::WebhookProvider)),
+            _ => None,
+        };
+
+        if let Some(p) = provider {
+            let t = title.to_string();
+            let b = body.to_string();
+            let p_id = provider_id.clone();
             
+            // Decouple actual network I/O from the caller thread
             tokio::spawn(async move {
-                let res = w_client.post(&webhook_url)
-                    .json(&w_payload)
-                    .send()
-                    .await;
-
-                if let Err(e) = res {
-                    error!("[FLIGHT_RECORDER] Generic webhook delivery channel failed: {}", e);
+                if let Err(err) = p.dispatch(&t, &b, &config_json).await {
+                    log::error!("[FLIGHT_RECORDER] Provider '{}' failed to deliver alert: {}", p_id, err);
                 }
             });
         }
-    }
-
-    /// Dispatches plain text messages across all configured channels
-    pub async fn broadcast_text(&self, config: &Config, msg: &str) {
-        // Task-isolate dispatch channels so one slow endpoint can never drag down the system loop
-        let t_client = self.client.clone();
-        let t_token = config.telegram_bot_token.clone();
-        let t_chat = config.telegram_chat_id.clone();
-        let t_msg = msg.to_string();
-
-        tokio::spawn(async move {
-            if let (Some(token), Some(chat_id)) = (t_token, t_chat) {
-                let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-                let res = t_client.post(&url)
-                    .json(&serde_json::json!({
-                        "chat_id": chat_id,
-                        "text": t_msg,
-                        "parse_mode": "HTML"
-                    }))
-                    .send()
-                    .await;
-
-                match res {
-                    Ok(resp) if resp.status().is_success() => {
-                        info!("[FLIGHT_RECORDER] Telegram alert transmitted.");
-                    }
-                    Ok(resp) => {
-                        error!("[FLIGHT_RECORDER] Telegram server rejected message payload: Status {}", resp.status());
-                    }
-                    Err(e) => {
-                        error!("[FLIGHT_RECORDER] Failed hitting Telegram gateway endpoint: {}", e);
-                    }
-                }
-            }
-        });
     }
 }

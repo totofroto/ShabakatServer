@@ -33,15 +33,17 @@ ShabakatServer/
 ├── src/
 │   ├── main.rs                     ← Axum server + background scheduler
 │   │
-│   ├── scanner/
-│   │   ├── mod.rs                  ← scan engine (copied from Tauri, Android code removed)
-│   │   ├── ping.rs                 ← TCP ping + real ICMP ping (NAS has CAP_NET_RAW)
-│   │   ├── ports.rs                ← Port Guardian (identical)
-│   │   ├── fingerprints.rs         ← Fingerprint engine (identical copy)
-│   │   ├── arp.rs                  ← /proc/net/arp reader (Linux native, no arp -a subprocess)
-│   │   ├── ssdp.rs                 ← SSDP/UPnP (no SO_BINDTODEVICE needed on wired ethernet)
-│   │   ├── mdns.rs                 ← mDNS browser (no MulticastLock needed on Linux)
-│   │   └── network.rs              ← Subnet detection (simplified — no Android fallbacks)
+├── scanner/
+│   ├── mod.rs                  ← scan engine (copied from Tauri, Android code removed)
+│   ├── ping.rs                 ← TCP ping + real ICMP ping (NAS has CAP_NET_RAW)
+│   ├── ports.rs                ← Port Guardian (identical)
+│   ├── fingerprints.rs         ← Fingerprint engine (identical copy)
+│   ├── arp.rs                  ← /proc/net/arp reader (Linux native, no arp -a subprocess)
+│   ├── digital_fence.rs        ← Passive Ambient Sentry (mDNS/SSDP tracker)
+│   ├── ssdp.rs                 ← SSDP/UPnP (no SO_BINDTODEVICE needed on wired ethernet)
+│   ├── mdns.rs                 ← mDNS browser (no MulticastLock needed on Linux)
+│   └── network.rs              ← Dynamic subnet detection (zero-config logic)
+
 │   │
 │   ├── api/
 │   │   ├── mod.rs                  ← Axum router
@@ -315,7 +317,7 @@ sudo mkdir -p /volume1/Docker/shabakat-server
 sudo docker-compose up -d
 
 # Access from any device on the network:
-# http://192.168.254.34:8080
+# http://<DYNAMIC_NODE_IP>:8080
 ```
 
 ---
@@ -348,11 +350,11 @@ Alert message format:
 🔴 New device on your network!
 
 MAC: AA:BB:CC:DD:EE:FF
-IP: 192.168.254.99
+IP: <TARGET_IP>
 Vendor: Unknown
 First seen: 2026-05-06 02:17:33
 
-Shabakat Server · http://192.168.254.34:8080
+Shabakat Server · http://<DYNAMIC_NODE_IP>:8080
 ```
 
 ### Webhook (Ntfy / Gotify / Discord / Slack)
@@ -395,12 +397,14 @@ One POST to the URL with the alert payload. Works with any notification service.
 7. Dockerfile + docker-compose.yml
 8. Deploy on WADDAN, verify scan works
 
-### Phase 2: Notifications + History (1 week)
-1. Telegram bot integration
-2. Webhook support
-3. Historical timeline API (`/api/history`)
-4. Timeline UI component (new page or tab)
-5. Device event log
+### Phase 2: Notifications + History (100% Complete)
+1. Telegram bot integration — **DONE (Trait-based Dynamic Provider)**
+2. Webhook support — **DONE (Trait-based Generic Webhook)**
+3. SMTP Email support — **DONE (Trait-based SMTP Provider)**
+4. Configuration API — **DONE (`/api/notifications/config`)**
+5. Historical timeline API (`/api/history`) — **DONE**
+6. Timeline UI component (new page or tab)
+7. Device event log — **DONE**
 
 ### Phase 3: Frontend Adapter (1 week)
 1. Add `transport.ts` adapter to main Shabakat React codebase

@@ -1,5 +1,6 @@
 pub mod arp;
 pub mod deep;
+pub mod digital_fence; // Expose the new passive ambient scanning sentry module
 pub mod fingerprints;
 pub mod network;
 pub mod network_identity;
@@ -246,15 +247,9 @@ pub fn get_best_local_network() -> Option<(Ipv4Addr, u8)> {
     let local = socket.local_addr().ok()?;
     match local.ip() {
         IpAddr::V4(v4) if !v4.is_unspecified() && !v4.is_loopback() => {
-            // Force strict fallback for headless NAS scanner: 192.168.254.0/24
             let prefix = 24;
-            let v4 = if v4.octets()[0] == 192 && v4.octets()[1] == 168 && v4.octets()[2] == 254 {
-                v4
-            } else {
-                Ipv4Addr::new(192, 168, 254, 18)
-            };
             info!(
-                "scan: UDP-trick fallback → {} (no netmask available, forcing 192.168.254.0/24)",
+                "scan: UDP-trick fallback → {} (no netmask available, using default /24)",
                 v4
             );
             Some((v4, prefix))

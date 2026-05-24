@@ -90,5 +90,47 @@ pub async fn run(conn: &Connection) -> Result<(), String> {
         )",
         (),
     ).await;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS notification_providers (
+            id TEXT PRIMARY KEY NOT NULL,         -- 'telegram', 'smtp', 'webhook_ntfy'
+            name TEXT NOT NULL,                  -- Human-readable name
+            enabled INTEGER DEFAULT 0,           -- 0 = disabled, 1 = enabled
+            config_json TEXT NOT NULL            -- Encrypted or plain credentials payload
+        );
+        INSERT OR IGNORE INTO notification_providers (id, name, enabled, config_json) 
+        VALUES ('telegram', 'Telegram Bot Alerting', 0, '{\"bot_token\":\"\",\"chat_id\":\"\"}');
+        INSERT OR IGNORE INTO notification_providers (id, name, enabled, config_json) 
+        VALUES ('smtp', 'SMTP Email Relay', 0, '{\"server\":\"\",\"port\":587,\"user\":\"\",\"pass\":\"\",\"to\":\"\"}');
+        INSERT OR IGNORE INTO notification_providers (id, name, enabled, config_json) 
+        VALUES ('webhook_ntfy', 'Ntfy / Custom Webhook', 0, '{\"url\":\"\",\"auth_token\":\"\"}');"
+    ).await.map_err(|e| format!("migration failed: {e}"))?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS hourly_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id INTEGER NOT NULL,
+            avg_latency_ms REAL NOT NULL,
+            min_latency_ms REAL NOT NULL,
+            max_latency_ms REAL NOT NULL,
+            total_scans INTEGER NOT NULL,
+            recorded_hour INTEGER NOT NULL, -- Unix timestamp floored to hour boundary
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_hourly_metrics_device_time 
+        ON hourly_metrics(device_id, recorded_hour);"
+    ).await.map_err(|e| format!("migration failed: {e}"))?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS device_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,          -- 'intruder', 'online', 'offline', 'outage', 'restored'
+            device_id INTEGER,                 -- Nullable for global network events like outages
+            timestamp INTEGER NOT NULL,        -- Unix epoch timestamp in milliseconds
+            details TEXT NOT NULL,
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_events_timestamp ON device_events(timestamp DESC);"
+    ).await.map_err(|e| format!("migration failed: {e}"))?;
+
     Ok(())
 }

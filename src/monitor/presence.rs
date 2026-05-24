@@ -44,7 +44,6 @@ pub async fn run_presence_monitor(state: AppState) {
 
                         // 3. Assemble historical metric context block
                         heartbeat_batch.push(MetricEntry {
-                            id: None,
                             scan_id: unique_scan_id.clone(),
                             scanned_at: timestamp,
                             device_id,

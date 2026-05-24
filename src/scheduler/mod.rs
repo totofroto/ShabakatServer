@@ -124,18 +124,27 @@ pub async fn run(state: AppState) {
                             }));
                         }
 
-                        // Send Telegram alerts for newly discovered devices.
+                        // Send alerts for newly discovered devices.
                         for (name, vendor, ip, mac) in &new_devices {
                             let vendor_str = if vendor.is_empty() { "Unknown" } else { vendor.as_str() };
-                            let payload = crate::notifications::AlertPayload {
-                                title: "Intruder Alert".to_string(),
-                                mac: mac.clone(),
-                                ip: ip.clone(),
-                                vendor: vendor_str.to_string(),
-                                hostname: Some(name.clone()),
-                                timestamp: chrono::Utc::now().to_rfc3339(),
-                            };
-                            state.notifications.broadcast_alert(&state.config, &payload).await;
+                            let body = format!(
+                                "MAC: {}\nIP: {}\nVendor: {}\nName: {}\nDetected At: {}",
+                                mac, ip, vendor_str, name, chrono::Utc::now().to_rfc3339()
+                            );
+
+                            // 1. Log the breach into the historical event registry
+                            let db_clone = state.db.clone();
+                            let mac_clone = mac.clone();
+                            tokio::spawn(async move {
+                                crate::storage::history::log_event(
+                                    &db_clone, 
+                                    "intruder", 
+                                    None, 
+                                    &format!("Breach detected! Unknown address: {}", mac_clone)
+                                ).await;
+                            });
+
+                            state.notifications.broadcast_alert(&state.db, "Intruder Alert", &body).await;
                         }
                     }
                     Err(e) => log::warn!("[SCHEDULER] Persistence failed: {e}"),

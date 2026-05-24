@@ -969,6 +969,31 @@ export function useNetworkScan() {
     return () => { unlisten?.(); };
   }, []); // refs are stable — no deps needed
 
+  // Latency update listener: real-time presence/latency enrichment.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen<any>(
+        "latency_update",
+        (event) => {
+          const { mac, ip, latencyMs, timestamp, isOnline } = event.payload;
+          const patchDevice = useDeviceStore.getState().patchDevice;
+          patchDevice(ip, {
+            isOnline: isOnline ?? true,
+            lastSeen: timestamp ?? Date.now(),
+            status: (isOnline ?? true) ? "Online" : "Offline",
+          });
+          if (latencyMs !== null && latencyMs !== undefined) {
+            addLatencySample(mac, ip, latencyMs);
+          }
+        },
+      );
+    };
+    void setup();
+    return () => { unlisten?.(); };
+  }, []);
+
   const ensurePermissionsForScan = useCallback(async (): Promise<boolean> => {
     console.log("[JS_TRACE] ensurePermissionsForScan:start");
     if (typeof window === "undefined" || !isTauri()) {
