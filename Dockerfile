@@ -13,6 +13,7 @@ FROM rust:slim-bookworm AS rust-builder
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
