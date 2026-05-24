@@ -2,7 +2,7 @@
 set -e
 
 echo "Building docker image for linux/amd64..."
-docker buildx build --platform linux/amd64 -t shabakat-server:latest .
+docker buildx build --platform linux/amd64 -t shabakat-server:latest --load .
 
 echo "Saving image to /tmp/shabakat-server.tar.gz..."
 docker save shabakat-server:latest | gzip > /tmp/shabakat-server.tar.gz

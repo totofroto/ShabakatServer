@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { transport } from "../lib/transport";
 
 interface User {
   sub: string;
@@ -17,16 +18,38 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // DEBUG: hardcoded debug user — remove before production deploy
-  const [user] = useState<User | null>({ sub: "debug", email: "debug@local", exp: 9999999999 });
-  const [loading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
-    // DEBUG: no-op while auth is disabled
+    try {
+      const res = await transport.fetch("/api/auth/me");
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
+      } else if (res.status === 401) {
+        setUser(null);
+      }
+    } catch (e) {
+      console.error("Auth check failed", e);
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    // DEBUG: skip API call while auth is disabled
+    // Check for token in URL hash (passed from google_callback)
+    const hash = window.location.hash;
+    if (hash.startsWith("#token=")) {
+      const token = hash.substring(7);
+      if (token) {
+        localStorage.setItem("shabakat_session_token", token);
+        // Clean up URL hash without refreshing
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+    }
+    refresh();
   }, []);
 
   const login = () => {
@@ -34,7 +57,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    // DEBUG: no-op while auth is disabled
+    try {
+      localStorage.removeItem("shabakat_session_token");
+      await transport.fetch("/api/auth/logout", { method: "POST" });
+      setUser(null);
+      window.location.href = "/login";
+    } catch (e) {
+      console.error("Logout failed", e);
+    }
   };
 
   return (

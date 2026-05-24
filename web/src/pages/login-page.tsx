@@ -1,13 +1,17 @@
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogIn, ShieldAlert, ShieldCheck } from "lucide-react";
 
 export function LoginPage() {
-  const { login, loading } = useAuth();
+  const { user, login, loading } = useAuth();
   const [searchParams] = useSearchParams();
   const error = searchParams.get("error");
+
+  if (user && !loading) {
+    return <Navigate to="/" replace />;
+  }
 
   const getErrorMessage = (err: string) => {
     switch (err) {

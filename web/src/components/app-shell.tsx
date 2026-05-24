@@ -8,7 +8,7 @@ import {
   Wifi,
   Wrench,
 } from "lucide-react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, Navigate } from "react-router-dom";
 import {
   NotificationCenterBell,
   NotificationCenterPanel,
@@ -45,12 +45,14 @@ const tabBarItems: {
 
 export function AppShell() {
   const { lang, toggleLang, isRtl, dict } = useLanguage();
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
 
   const [settings, setSettings] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetchSettings();
+    if (user) {
+      fetchSettings();
+    }
 
     const handleUpdate = (e: any) => {
       const { key, value } = e.detail;
@@ -59,18 +61,24 @@ export function AppShell() {
 
     window.addEventListener("settings-updated", handleUpdate);
     return () => window.removeEventListener("settings-updated", handleUpdate);
-  }, []);
+  }, [user]);
 
-  const fetchSettings = async () => {
-    try {
-      const res = await fetch("/api/settings");
-      if (res.ok) {
-        setSettings(await res.json());
-      }
-    } catch (e) {
-      console.error("Failed to fetch settings", e);
-    }
-  };
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black">
+        <div className="flex flex-col items-center gap-4">
+          <Radar className="size-12 animate-pulse text-accent" />
+          <p className="text-xs font-bold uppercase tracking-widest text-secondary animate-pulse">
+            Establishing Secure Link...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
 
   const backdropType = settings["backdrop_type"] || "void";
   const backdropImage = settings["backdrop_image"];

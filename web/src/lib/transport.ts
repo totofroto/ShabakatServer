@@ -201,6 +201,12 @@ async function browserRequest<T>(
   const method = init?.method?.toUpperCase() || "GET";
   const headers = new Headers(init?.headers);
 
+  // Force-Inject Auth Header from localStorage if available
+  const token = localStorage.getItem("shabakat_session_token");
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   // Auto-set Content-Type for JSON payloads
   if (["POST", "PATCH", "PUT"].includes(method)) {
     if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
@@ -214,6 +220,15 @@ async function browserRequest<T>(
       headers,
       credentials: "include",
     });
+
+    if (res.status === 401) {
+      // If we get a 401, the token might be expired
+      localStorage.removeItem("shabakat_session_token");
+      // Optional: trigger a redirect to login if not already there
+      if (!window.location.pathname.startsWith("/login")) {
+         window.location.href = "/login";
+      }
+    }
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => "Unknown error");
@@ -482,13 +497,20 @@ export const transport = {
       ...init 
     };
     const method = (options.method || "GET").toUpperCase();
+    const headers = new Headers(options.headers);
+
+    // Force-Inject Auth Header from localStorage if available
+    const token = localStorage.getItem("shabakat_session_token");
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+
     if (["POST", "PATCH", "PUT"].includes(method)) {
-      const headers = new Headers(options.headers);
       if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
         headers.set("Content-Type", "application/json");
       }
-      options.headers = headers;
     }
+    options.headers = headers;
     return window.fetch(input, options);
   },
   invoke,

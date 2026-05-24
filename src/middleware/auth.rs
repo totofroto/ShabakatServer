@@ -28,6 +28,7 @@ pub async fn auth_middleware(
 
     // Check if auth is disabled globally
     if state.config.disable_auth {
+        log::info!("[AUTH_DEBUG] Auth disabled globally. Allowing request to {}", path);
         return Ok(next.run(req).await);
     }
 
@@ -38,25 +39,33 @@ pub async fn auth_middleware(
 
     // Check for local bypass if enabled
     if state.config.auth_bypass_local && is_local_ip(addr.ip()) {
+        log::info!("[AUTH_DEBUG] Local bypass active for {}. Allowing request to {}", addr.ip(), path);
         return Ok(next.run(req).await);
     }
 
     // Check cookie or authorization header
     let mut token = jar
-        .get("admin_token")
-        .map(|c| c.value().to_string())
+        .get("session")
+        .map(|c| {
+            log::debug!("[AUTH_DEBUG] Found session cookie for {}", path);
+            c.value().to_string()
+        })
         .or_else(|| {
             req.headers()
-                .get("Authorization")
+                .get(axum::http::header::AUTHORIZATION)
                 .and_then(|h| h.to_str().ok())
                 .and_then(|s| s.strip_prefix("Bearer "))
-                .map(|s| s.to_string())
+                .map(|s| {
+                    log::info!("[AUTH_DEBUG] Found Authorization Bearer token for {}", path);
+                    s.to_string()
+                })
         });
 
     // Re-hydration layer: check database if token is missing
     if token.is_none() {
         if let Ok(Some(db_token)) = crate::storage::settings::get_setting(state.db.clone(), "active_admin_session").await {
             if !db_token.is_empty() {
+                log::info!("[AUTH_DEBUG] Re-hydrating session from DB for {}", path);
                 token = Some(db_token);
             }
         }
@@ -64,7 +73,10 @@ pub async fn auth_middleware(
 
     let token = match token {
         Some(t) => t,
-        None => return Err(StatusCode::UNAUTHORIZED),
+        None => {
+            log::warn!("[AUTH_DEBUG] No authentication token found for {}", path);
+            return Err(StatusCode::UNAUTHORIZED);
+        }
     };
 
     let decoding_key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
@@ -74,16 +86,32 @@ pub async fn auth_middleware(
 
     match decode::<Claims>(&token, &decoding_key, &validation) {
         Ok(_) => Ok(next.run(req).await),
-        Err(_) => Err(StatusCode::UNAUTHORIZED),
+        Err(e) => {
+            log::error!("[AUTH_DEBUG] JWT decoding failed for {}: {:?}", path, e);
+            Err(StatusCode::UNAUTHORIZED)
+        }
     }
 }
 
 fn is_protected_route(path: &str) -> bool {
     let path = path.to_lowercase();
-    // Bulletproof whitelist: catch the auth paths regardless of how Axum strips the prefix
-    if path.contains("/auth") || path.contains("/google/login") || path.contains("/google/callback") {
+
+    // Explicitly protect the /me endpoint even if it contains /auth
+    if path.ends_with("/auth/me") {
+        return true;
+    }
+
+    // Whitelist login and callback routes
+    if path.contains("/google/login") || path.contains("/google/callback") || path.contains("/auth/google") {
         return false; // NOT protected
     }
+
+    // General auth routes (like login/callback if they don't match above)
+    // but we want to be careful not to whitelist everything under /api/auth
+    if path.contains("/auth") && (path.contains("/login") || path.contains("/callback")) {
+        return false;
+    }
+
     true
 }
 

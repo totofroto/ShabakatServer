@@ -7,7 +7,7 @@ COPY web/ .
 RUN npm run build
 
 # ── Stage 2: Build Rust backend ───────────────────────────────────────────────
-FROM rust:slim-bookworm AS rust-builder
+FROM rust:1.80-slim-bookworm AS rust-builder
 
 # build-essential gives gcc (needed by rusqlite's bundled C compile)
 RUN apt-get update && apt-get install -y \

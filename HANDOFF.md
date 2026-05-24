@@ -1,6 +1,6 @@
-# PROJECT HANDOFF & ARCHITECTURE SYNC (V1.4.0)
+# PROJECT HANDOFF & ARCHITECTURE SYNC (V1.4.1)
 **Date:** May 24, 2026
-**System Status:** Container-hardened Network-Agnostic Passive Digital Fence and Trait-Based Notification Hub are 100% LIVE.
+**System Status:** Container-hardened Network-Agnostic Passive Digital Fence, Trait-Based Notification Hub, and Hardened Google OAuth are 100% LIVE.
 
 ## 1. Core Architecture (The Stack)
 *   **Backend:** Rust (Axum, Tokio) — High-concurrency async engine.
@@ -41,7 +41,12 @@
 *   **Logic:** Digital Fence events (`latency_update` with synthetic 0.1ms flag) are pushed directly to the React D3 Star-Map.
 *   **UI:** Devices "glow" or pulse on the map the moment they broadcast ambient traffic.
 
+### 4) Hardened Google OAuth & Admin Externalization
+*   **Security:** Relaxed CSRF cookie path restrictions (`/api/auth`) and enforced `SameSite::Lax` to prevent landing loop failures during cross-origin redirects.
+*   **Config:** Fully externalized `SHABAKAT_ADMIN_EMAIL` allowlist, removing all hardcoded PII/Email references from the source tree.
+*   **Verification:** Frontend and Backend build chains validated clean.
+
 ## 5. Deployment Verification
 *   **Node IP:** Dynamic (Verified on WADDAN: `192.168.254.18`).
-*   **Git State:** `feat: deploy container-hardened passive digital fence monitoring via multicast table tracing`.
+*   **Git Posture:** Synchronized; Google OAuth CSRF cookie restrictions relaxed via path boundaries, and `SHABAKAT_ADMIN_EMAIL` fully externalized.
 *   **Container Caps:** Requires `NET_RAW` and `NET_ADMIN` for ARP tracing and ICMP.
