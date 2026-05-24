@@ -63,6 +63,17 @@ export function AppShell() {
     return () => window.removeEventListener("settings-updated", handleUpdate);
   }, [user]);
 
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        setSettings(await res.json());
+      }
+    } catch (e) {
+      console.error("Failed to fetch settings", e);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-black">
