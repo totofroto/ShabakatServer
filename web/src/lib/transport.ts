@@ -7,6 +7,7 @@ import {
 } from "@tauri-apps/api/core";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { listen as tauriListen } from "@tauri-apps/api/event";
+import { API_BASE_URL } from "./constants";
 
 // Detect runtime profile (Tauri App Context vs Standalone Browser Container Mode)
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI__' in window;
@@ -68,12 +69,10 @@ function parsePingLatency(raw: string): number | null {
 function ensureWs(): void {
   if (isTauri()) return;
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
-  
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${proto}//${location.host}/ws`;
+
+  const wsUrl = API_BASE_URL.replace(/^http/, "ws") + "/ws";
   console.log(`[TRANSPORT] Initializing Shabakat Engine WebSocket Stream connection: ${wsUrl}`);
   const ws = new WebSocket(wsUrl);
-  
   ws.onopen = () => {
     _reconnectAttempts = 0;
   };
@@ -215,7 +214,8 @@ async function browserRequest<T>(
   }
 
   try {
-    const res = await fetch(url, {
+    const fullUrl = url.startsWith("http") ? url : API_BASE_URL + url;
+    const res = await fetch(fullUrl, {
       ...init,
       headers,
       credentials: "include",
@@ -492,9 +492,14 @@ export const transport = {
    * auto-sets Content-Type: application/json for POST/PATCH/PUT if body isn't FormData.
    */
   fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-    const options: RequestInit = { 
+    let finalInput = input;
+    if (typeof input === "string" && !input.startsWith("http")) {
+      finalInput = API_BASE_URL + input;
+    }
+
+    const options: RequestInit = {
       credentials: "include",
-      ...init 
+      ...init
     };
     const method = (options.method || "GET").toUpperCase();
     const headers = new Headers(options.headers);
@@ -511,7 +516,7 @@ export const transport = {
       }
     }
     options.headers = headers;
-    return window.fetch(input, options);
+    return window.fetch(finalInput, options);
   },
   invoke,
   isTauri,
