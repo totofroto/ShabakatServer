@@ -21,6 +21,14 @@ pub async fn auth_middleware(
 ) -> Result<Response, StatusCode> {
     let path = req.uri().path();
 
+    // DIAGNOSTIC LOG
+    if let Some(auth_header) = req.headers().get(axum::http::header::AUTHORIZATION) {
+        log::info!("[AUTH_DEBUG] {} {} -> Received Auth header: {:?}", req.method(), path, auth_header);
+    } else {
+        log::warn!("[AUTH_DEBUG] {} {} -> NO Authorization header present!", req.method(), path);
+        log::info!("[AUTH_DEBUG] All headers: {:?}", req.headers());
+    }
+
     // Whitelist authentication routes - MUST happen before token check
     if !is_protected_route(path) {
         return Ok(next.run(req).await);
@@ -45,9 +53,10 @@ pub async fn auth_middleware(
 
     // Check cookie or authorization header
     let mut token = jar
-        .get("session")
+        .get("admin_token")
+        .or_else(|| jar.get("session"))
         .map(|c| {
-            log::debug!("[AUTH_DEBUG] Found session cookie for {}", path);
+            log::debug!("[AUTH_DEBUG] Found {} cookie for {}", c.name(), path);
             c.value().to_string()
         })
         .or_else(|| {

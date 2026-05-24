@@ -206,7 +206,15 @@ pub async fn google_callback(
 
     // Set cookie
     let is_secure = redirect_uri.starts_with("https");
-    let cookie = Cookie::build(("session", token.clone()))
+    let cookie_session = Cookie::build(("session", token.clone()))
+        .path("/")
+        .http_only(true)
+        .secure(is_secure)
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .expires(time::OffsetDateTime::from_unix_timestamp(expiration.timestamp()).unwrap())
+        .build();
+
+    let cookie_admin = Cookie::build(("admin_token", token.clone()))
         .path("/")
         .http_only(true)
         .secure(is_secure)
@@ -224,7 +232,7 @@ pub async fn google_callback(
     }
 
     let redirect_url = format!("/dashboard#token={}", token);
-    (jar.add(cookie), Redirect::to(&redirect_url)).into_response()
+    (jar.add(cookie_session).add(cookie_admin), Redirect::to(&redirect_url)).into_response()
 }
 
 pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoResponse {
@@ -235,11 +243,15 @@ pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoR
         "".to_string(),
     ).await;
 
-    let cookie = Cookie::build(("session", ""))
+    let cookie_session = Cookie::build(("session", ""))
         .path("/")
         .max_age(time::Duration::ZERO)
         .build();
-    (jar.add(cookie), Redirect::to("/login"))
+    let cookie_admin = Cookie::build(("admin_token", ""))
+        .path("/")
+        .max_age(time::Duration::ZERO)
+        .build();
+    (jar.add(cookie_session).add(cookie_admin), Redirect::to("/login"))
 }
 
 pub async fn me(
@@ -247,7 +259,14 @@ pub async fn me(
     jar: CookieJar,
     State(state): State<AppState>,
 ) -> Result<Json<Claims>, (axum::http::StatusCode, String)> {
-    let mut token = jar.get("session").map(|c| c.value().to_string());
+    // DIAGNOSTIC LOG
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        log::info!("[AUTH_DEBUG] /me received Auth header: {:?}", auth_header);
+    } else {
+        log::warn!("[AUTH_DEBUG] /me NO Authorization header present!");
+    }
+
+    let mut token = jar.get("admin_token").or_else(|| jar.get("session")).map(|c| c.value().to_string());
 
     // Check Authorization header if cookie is missing
     if token.is_none() {
