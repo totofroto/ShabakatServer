@@ -24,7 +24,7 @@ At the start of every new session, read:
 | Layer | Technology |
 |---|---|
 | Backend | Rust + Tokio + Axum |
-| Database | SQLite via rusqlite |
+| Database | SQLite via libSQL |
 | API | REST (JSON) + WebSocket (live events) |
 | Frontend | React + TypeScript + Vite (static build served by Axum) |
 | Deployment | Docker (multi-arch: x86_64 + aarch64) |
@@ -36,7 +36,7 @@ At the start of every new session, read:
 
 ```
 Docker container (--network host, --cap-add=NET_RAW)
-├── Axum HTTP server (:8080)
+├── Axum HTTP server (:7779)
 │   ├── /api/*          REST endpoints
 │   ├── /ws             WebSocket (live scan events, latency, alerts)
 │   └── /*              Static React frontend
@@ -99,7 +99,7 @@ When Tareg pastes logs, you analyze and fix. Same protocol as the Tauri project 
 - All async functions use Tokio.
 - All errors return proper HTTP status codes (400/404/500) with JSON error bodies.
 - Every scan, alert, and significant action logs with `[FLIGHT_RECORDER]` prefix (same convention).
-- SQLite operations use rusqlite with connection pooling (r2d2-sqlite or deadpool-sqlite).
+- SQLite operations use libSQL with WAL mode enabled.
 - WebSocket messages use the same event names and payload shapes as the Tauri app for frontend compatibility.
 - Config via environment variables (12-factor app style).
 - No unwrap() in production paths. All errors handled and logged.
@@ -148,11 +148,11 @@ The Tauri app's scanner code lives at:
 
 1. ☐ Never modify files in ~/Documents/Shabakat/ (the Tauri app)
 2. ☐ All scanner code stripped of Tauri/Android dependencies before compiling
-3. ☐ Every API endpoint returns proper JSON with error handling
-4. ☐ WebSocket events match Tauri event names/shapes for frontend compatibility
-5. ☐ Docker builds and runs with `--network host --cap-add=NET_RAW --cap-add=NET_ADMIN`
-6. ☐ SQLite schema migrations run automatically on startup
-7. ☐ All log lines use `[FLIGHT_RECORDER]` convention
+- **Every API endpoint returns proper JSON with error handling**
+- **WebSocket events match Tauri event names/shapes for frontend compatibility**
+- **Docker builds and runs with `--network host --cap-add=NET_RAW --cap-add=NET_ADMIN`**
+- **SQLite schema (libSQL) migrations run automatically on startup**
+- **All log lines use `[FLIGHT_RECORDER]` convention**
 8. ☐ After changes: `cargo check`, `cargo build --release`, Docker build test
 9. ☐ After completing any feature, bug fix, or significant change — update HANDOFF.md: update the "Current State" section to reflect what now works, move completed items to done, and update "In Progress" with what is still pending.
 

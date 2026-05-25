@@ -58,8 +58,8 @@ ShabakatServer/
 │   │   ├── watchdog.rs             ← Periodic full scan (configurable: 5/10/30 min)
 │   │   └── heartbeat.rs            ← Live device monitoring (ping alive devices every N min)
 │   │
-│   ├── storage/
-│   │   ├── mod.rs                  ← SQLite via rusqlite (not JSON files)
+├── storage/
+│   │   ├── mod.rs                  ← SQLite via libSQL (not JSON files)
 │   │   ├── schema.sql              ← devices, scan_history, device_events, settings
 │   │   ├── devices.rs              ← CRUD for device records
 │   │   ├── history.rs              ← Append-only scan history (which devices were online when)
@@ -271,7 +271,7 @@ COPY --from=rust-builder /build/target/release/shabakat-server /usr/local/bin/
 COPY --from=web-builder /web/dist /srv/web
 ENV SHABAKAT_WEB_DIR=/srv/web
 ENV SHABAKAT_DATA_DIR=/data
-EXPOSE 8080
+EXPOSE 7779
 VOLUME /data
 CMD ["shabakat-server"]
 ```
@@ -282,7 +282,7 @@ CMD ["shabakat-server"]
 version: "3.8"
 services:
   shabakat:
-    image: ghcr.io/totofroto/shabakat-server:latest
+    image: shabakat-server:v4
     container_name: shabakat-server
     restart: unless-stopped
     network_mode: host          # CRITICAL: raw LAN access for SSDP/mDNS/ARP
@@ -293,7 +293,7 @@ services:
       - SHABAKAT_SCAN_INTERVAL=600        # seconds between auto-scans (10 min)
       - SHABAKAT_HEARTBEAT_INTERVAL=120   # seconds between device heartbeats (2 min)
       - SHABAKAT_SUBNET=auto              # auto-detect or override: 192.168.254.0/24
-      - SHABAKAT_PORT=8080                # web UI port
+      - SHABAKAT_PORT=7779                # web UI port
       - SHABAKAT_TELEGRAM_BOT_TOKEN=      # your totofroto_bot token
       - SHABAKAT_TELEGRAM_CHAT_ID=        # your Telegram chat ID
     volumes:
@@ -317,7 +317,7 @@ sudo mkdir -p /volume1/Docker/shabakat-server
 sudo docker-compose up -d
 
 # Access from any device on the network:
-# http://<DYNAMIC_NODE_IP>:8080
+# http://<DYNAMIC_NODE_IP>:7779
 ```
 
 ---
@@ -354,7 +354,7 @@ IP: <TARGET_IP>
 Vendor: Unknown
 First seen: 2026-05-06 02:17:33
 
-Shabakat Server · http://<DYNAMIC_NODE_IP>:8080
+Shabakat Server · http://<DYNAMIC_NODE_IP>:7779
 ```
 
 ### Webhook (Ntfy / Gotify / Discord / Slack)
@@ -380,14 +380,14 @@ One POST to the URL with the alert payload. Works with any notification service.
 | DNS resolution | Bionic mutex limits to 4 concurrent | glibc, no limit |
 | Concurrent probes | Capped at 64 (Android) | 256+ (NAS has resources) |
 | Access | One device | Any browser on the network |
-| Storage | Device local storage | SQLite on NAS (persistent, queryable) |
+| Storage | Device local storage | SQLite via libSQL (persistent, queryable) |
 | Uptime | When app is open | 24/7/365 |
 
 ---
 
 ## Implementation Order
 
-### Phase 1: Minimal Working Server (1 week with Claude Code)
+### Phase 1: Minimal Working Server (100% Complete)
 1. Copy scanner/, fingerprints.rs, tools.rs, network.rs, arp.rs from Tauri project
 2. Strip all `#[cfg(target_os = "android")]` blocks and Tauri dependencies
 3. Build Axum server with `/api/scan`, `/api/devices`, `/ws`
@@ -406,12 +406,12 @@ One POST to the URL with the alert payload. Works with any notification service.
 6. Timeline UI component (new page or tab)
 7. Device event log — **DONE**
 
-### Phase 3: Frontend Adapter (1 week)
+### Phase 3: Frontend Adapter (100% Complete)
 1. Add `transport.ts` adapter to main Shabakat React codebase
 2. Build shared `dist/` that works in both Tauri and browser
 3. Single `npm run build` produces universal frontend
 
-### Phase 4: Polish + Release
+### Phase 4: Polish + Release (100% Complete)
 1. Multi-arch Docker image (x86_64 + aarch64)
 2. Asustor ADM App Center package (optional)
 3. README with setup guide
