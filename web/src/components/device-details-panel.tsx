@@ -663,6 +663,20 @@ export function DeviceDetailsPanel({
                 </button>
               ) : (
                 <div className="px-4 py-3 space-y-3">
+                  {device.suggestedNames && device.suggestedNames.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {device.suggestedNames.map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          onClick={() => setEditInput(suggestion)}
+                          className="px-2.5 py-1 rounded-full text-[12px] font-medium bg-accent/5 text-accent border border-accent/20 hover:bg-accent/10 transition-colors"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <input
                     type="text"
                     value={editInput}

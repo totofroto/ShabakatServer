@@ -17,6 +17,8 @@ pub fn identify_by_ports(open_ports: &[u16]) -> String {
 
 pub use fingerprints::classify_from_hostname;
 pub use fingerprints::classify_from_vendor;
+pub use fingerprints::get_registry;
+pub use fingerprints::identify_corporate_vendor;
 pub use fingerprints::merge_port_and_http_likely;
 
 use log::{debug, info, warn};
@@ -73,10 +75,15 @@ use ipnet::Ipv4Net;
 use mdns_sd::{Receiver as MdnsReceiver, ServiceDaemon, ServiceEvent};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 
 /// Channel sender for streaming scan events to the WebSocket layer (or test harness).
 type EventSink = Option<mpsc::UnboundedSender<ScanEvent>>;
+
+static XML_PROBE_SEM: OnceLock<Semaphore> = OnceLock::new();
+fn xml_probe_sem() -> &'static Semaphore {
+    XML_PROBE_SEM.get_or_init(|| Semaphore::new(16))
+}
 
 pub struct ScanNetworkResult {
     pub devices: Vec<DiscoveredDevice>,
@@ -365,23 +372,7 @@ fn is_generic_hostname(name: &str, ip: &str) -> bool {
 }
 
 fn infer_device_name(vendor: &str, ip: &str) -> String {
-    let lowered_vendor = vendor.to_ascii_lowercase();
-    if lowered_vendor.contains("apple") {
-        if ip.ends_with(".2") || ip.ends_with(".3") || ip.ends_with(".4") || ip.ends_with(".5") {
-            return "Apple Mobile Device".to_string();
-        }
-        return "Apple Device".to_string();
-    }
-    if lowered_vendor.contains("samsung") {
-        return "Samsung Device".to_string();
-    }
-    if lowered_vendor.contains("raspberry") {
-        return "Raspberry Pi".to_string();
-    }
-    if lowered_vendor.contains("ubiquiti") {
-        return "Ubiquiti Network Device".to_string();
-    }
-    if vendor != "Unknown" {
+    if vendor != "Unknown" && !vendor.is_empty() {
         return format!("{vendor} Device");
     }
     format!("Host {ip}")
@@ -402,26 +393,17 @@ fn infer_device_type(
         if services.contains("hap") {
             return "iot".to_string();
         }
-        if services.contains("printer") {
+        if services.contains("printer") || services.contains("ipp") {
             return "printer".to_string();
         }
-        if services.contains("spotify") {
+        if services.contains("spotify") || services.contains("sonos") || services.contains("raop") {
             return "audio".to_string();
         }
         if services.contains("smb") {
             return "laptop".to_string();
         }
-        if services.contains("sonos") || services.contains("raop") {
-            return "audio".to_string();
-        }
-        if services.contains("ipp") {
-            return "printer".to_string();
-        }
         if services.contains("airplay")
             && (lowered_hostname.contains("tv")
-                || lowered_hostname.contains("appletv")
-                || lowered_hostname.contains("roku")
-                || lowered_hostname.contains("samsungtv")
                 || lowered_hostname.contains("sony")
                 || lowered_hostname.contains("lg"))
         {
@@ -429,17 +411,9 @@ fn infer_device_type(
         }
     }
 
-    if lowered_hostname.contains("appletv")
-        || lowered_hostname.contains("roku")
-        || lowered_hostname.contains("samsungtv")
-        || lowered_hostname.contains("samsung tv")
-        || lowered_hostname.contains("sony tv")
-        || lowered_hostname.contains("tv")
+    if lowered_hostname.contains("tv")
         || lowered_hostname.contains("bravia")
         || lowered_hostname.contains("webos")
-        || lowered_vendor.contains("roku")
-        || lowered_vendor.contains("lg")
-        || lowered_vendor.contains("sony")
     {
         return "tv".to_string();
     }
@@ -450,7 +424,6 @@ fn infer_device_type(
         || lowered_hostname.contains("homepod")
         || lowered_hostname.contains("nest")
         || lowered_hostname.contains("google home")
-        || lowered_vendor.contains("sonos")
     {
         return "audio".to_string();
     }
@@ -469,30 +442,9 @@ fn infer_device_type(
     {
         return "laptop".to_string();
     }
-    if lowered_hostname.contains("appletv")
-        || lowered_hostname.contains("roku")
-        || lowered_hostname.contains("sonos")
-        || lowered_hostname.contains("hue")
-    {
-        return "iot".to_string();
-    }
 
     if lowered_vendor.contains("printer") {
         return "printer".to_string();
-    }
-    if lowered_vendor.contains("apple") {
-        return "laptop".to_string();
-    }
-    if lowered_vendor.contains("samsung") {
-        return "phone".to_string();
-    }
-    if lowered_vendor.contains("raspberry")
-        || lowered_vendor.contains("ubiquiti")
-        || lowered_vendor.contains("roku")
-        || lowered_vendor.contains("sonos")
-        || lowered_vendor.contains("philips")
-    {
-        return "iot".to_string();
     }
 
     "iot".to_string()
@@ -1437,8 +1389,13 @@ fn apply_ssdp_fingerprint(d: &mut DiscoveredDevice, ssdp: &HashMap<String, Strin
 
     if d.vendor_name.trim().eq_ignore_ascii_case("unknown") {
         let label = truncate_ssdp_vendor_banner(server);
-        d.vendor_name = label.clone();
-        d.vendor = label;
+        if let Some(corporate) = identify_corporate_vendor("", &label) {
+            d.vendor_name = corporate.clone();
+            d.vendor = corporate;
+        } else {
+            d.vendor_name = label.clone();
+            d.vendor = label;
+        }
     }
 
     if d.mdns_hostname.is_some() {
@@ -1631,7 +1588,10 @@ fn mdns_stub_device(ip: &str, info: &MdnsHostInfo) -> Option<DiscoveredDevice> {
     if human.is_empty() {
         return None;
     }
-    let vendor_name = "Unknown".to_string();
+    let mut vendor_name = "Unknown".to_string();
+    if let Some(corporate) = identify_corporate_vendor(&human, "") {
+        vendor_name = corporate;
+    }
     let vendor = vendor_name.clone();
     let mdns_services = Some(&info.services);
     let device_type = infer_device_type(&human, &vendor, mdns_services);
@@ -1652,6 +1612,7 @@ fn mdns_stub_device(ip: &str, info: &MdnsHostInfo) -> Option<DiscoveredDevice> {
         ssdp_server: None,
         latency_ms: None,
         open_ports: None,
+        suggested_names: None,
     })
 }
 
@@ -1737,42 +1698,74 @@ async fn probe_host(
     state: Arc<Mutex<ScanProgressState>>,
     profile: ScanProfile,
 ) -> Option<(String, DiscoveredDevice, f64)> {
-    info!("[FLIGHT_RECORDER] Probing IP: {:?} | Method: TCP+ICMP", ip);
+    let ip_string = ip.to_string();
     if scan_cancelled() {
         return None;
     }
 
-    let Some(probe) =
-        tokio::time::timeout(profile.host_probe_timeout, ping::ping_host_latency_ms(ip))
-            .await
-            .ok()
-            .flatten()
-    else {
-        let ip_string = ip.to_string();
-        let mac_opt = get_mac_address(&ip_string).await;
-        let mdns_identity =
+    // --- Phase 1: Passive / Cache identification (PRIORITY) ---
+    let mac_opt = get_mac_address(&ip_string).await;
+    let mac = mac_opt.clone().unwrap_or_else(|| "Unknown".to_string());
+
+    let mdns_info = {
+        let g = state.lock().unwrap();
+        g.mdns.get(&ip_string).cloned()
+    };
+    let mdns_hostname_cached = mdns_info.as_ref().and_then(|m| m.hostname.clone());
+    let mdns_str = mdns_hostname_cached.as_deref().unwrap_or("");
+
+    let registry_match = get_registry().match_device(&mac, mdns_str);
+    if let Some(ref p) = registry_match {
+        info!("[REGISTRY] Pre-probe match for {}: {} ({})", ip_string, p.name, p.device_type);
+    }
+
+    info!("[FLIGHT_RECORDER] Probing IP: {:?} | Method: TCP+ICMP", ip);
+    let probe_result = tokio::time::timeout(profile.host_probe_timeout, ping::ping_host_latency_ms(ip))
+        .await
+        .ok()
+        .flatten();
+
+    if probe_result.is_none() {
+        let mdns_identity = if mdns_hostname_cached.is_none() {
             tokio::time::timeout(Duration::from_millis(350), unicast_mdns_query(&ip_string))
                 .await
                 .ok()
-                .flatten();
+                .flatten()
+        } else {
+            mdns_hostname_cached.clone()
+        };
 
-        // If we have neither a MAC (ARP cache) nor an mDNS identity, the device is truly unreachable.
-        if mac_opt.is_none() && mdns_identity.is_none() {
+        if mac_opt.is_none() && mdns_identity.is_none() && registry_match.is_none() {
             return None;
         }
 
         let mac = mac_opt.unwrap_or_else(|| "Unknown".to_string());
-        let vendor_name = vendor_name_from_mac(&mac);
-        let vendor = vendor_name.clone();
-        
         let mdns_label = mdns_identity;
-        let label_for_infer = mdns_label.as_deref().unwrap_or(&vendor);
-        let device_type = infer_device_type(label_for_infer, &vendor, None);
-        let resolved_name =
-            infer_device_name_with_type(label_for_infer, &vendor, &ip_string, &device_type);
-        let is_randomized = is_randomized_mac(&mac);
+        let mdns_str = mdns_label.as_deref().unwrap_or("");
+        
+        let mut vendor_name;
+        let device_type;
+        let resolved_name;
 
-        log::info!("[SCAN] Stealth device found via ARP/mDNS: {} [{}] vendor={}", ip_string, mac, vendor_name);
+        if let Some(p) = registry_match.or_else(|| get_registry().match_device(&mac, mdns_str)) {
+            vendor_name = p.vendor;
+            device_type = p.device_type;
+            resolved_name = p.name;
+        } else {
+            vendor_name = vendor_name_from_mac(&mac);
+            if vendor_name.eq_ignore_ascii_case("unknown") {
+                if let Some(corporate) = identify_corporate_vendor(mdns_str, "") {
+                    vendor_name = corporate;
+                }
+            }
+            let vendor = vendor_name.clone();
+            let label_for_infer = if mdns_str.is_empty() { &vendor } else { mdns_str };
+            device_type = infer_device_type(label_for_infer, &vendor, None);
+            resolved_name = infer_device_name_with_type(label_for_infer, &vendor, &ip_string, &device_type);
+        }
+
+        let is_randomized = is_randomized_mac(&mac);
+        log::info!("[SCAN] Stealth device found via ARP/mDNS/Registry: {} [{}] vendor={}", ip_string, mac, vendor_name);
 
         return Some((
             ip_string.clone(),
@@ -1781,7 +1774,7 @@ async fn probe_host(
                 name: resolved_name,
                 ip: ip_string,
                 mac,
-                vendor,
+                vendor: vendor_name.clone(),
                 vendor_name,
                 device_type,
                 is_randomized,
@@ -1792,14 +1785,15 @@ async fn probe_host(
                 ssdp_server: None,
                 latency_ms: Some(1.0),
                 open_ports: None,
+                suggested_names: None,
             },
             1.0,
         ));
-    };
+    }
+
+    let probe = probe_result.unwrap();
     let latency_ms = probe.latency_ms;
     let tcp_ports = probe.tcp_ports;
-
-    let ip_string = ip.to_string();
 
     let (raw_rdns, ptr_hostname) = tokio::join!(network::reverse_dns(ip), async {
         tokio::time::timeout(
@@ -1821,11 +1815,8 @@ async fn probe_host(
     }
     let reverse_name = raw_rdns.unwrap_or_else(|| format!("Host {}", ip));
 
-    let mac_opt = get_mac_address(&ip_string).await;
-    let mac = mac_opt.unwrap_or_else(|| "Unknown".to_string());
-    let vendor_name = vendor_name_from_mac(&mac);
-    log::info!("[SCAN] Host {} [{}] vendor={}", ip_string, mac, vendor_name);
-    let vendor = vendor_name.clone();
+    let vendor_name_oui = vendor_name_from_mac(&mac);
+    log::info!("[SCAN] Host {} [{}] vendor={}", ip_string, mac, vendor_name_oui);
 
     let (mdns_hostname_opt, mdns_primary_opt, mdns_services_for_infer) = {
         let g = state.lock().unwrap();
@@ -1838,85 +1829,137 @@ async fn probe_host(
     };
 
     let effective_mdns_hostname = mdns_hostname_opt.or(ptr_hostname);
+    let mdns_str = effective_mdns_hostname.as_deref().unwrap_or("");
 
-    let label_for_infer = effective_mdns_hostname
-        .as_deref()
-        .unwrap_or(reverse_name.as_str());
+    // Re-check registry if we have new mDNS info
+    let final_registry_match = registry_match.or_else(|| get_registry().match_device(&mac, mdns_str));
 
-    let device_type = infer_device_type(label_for_infer, &vendor, mdns_services_for_infer.as_ref());
+    let mut vendor_name;
+    let device_type;
+    let resolved_name;
 
-    let resolved_name = match &effective_mdns_hostname {
-        Some(h) if !is_generic_hostname(h, &ip_string) => h.clone(),
-        Some(h) => infer_device_name_with_type(h, &vendor, &ip_string, &device_type),
-        None => infer_device_name_with_type(&reverse_name, &vendor, &ip_string, &device_type),
-    };
+    if let Some(ref p) = final_registry_match {
+        vendor_name = p.vendor.clone();
+        device_type = p.device_type.clone();
+        resolved_name = p.name.clone();
+    } else {
+        let v_tmp = vendor_name_oui.clone();
+        let label_for_infer = if mdns_str.is_empty() { reverse_name.as_str() } else { mdns_str };
+        device_type = infer_device_type(label_for_infer, &vendor_name_oui, mdns_services_for_infer.as_ref());
+        resolved_name = match &effective_mdns_hostname {
+            Some(h) if !is_generic_hostname(h, &ip_string) => h.clone(),
+            Some(h) => infer_device_name_with_type(h, &vendor_name_oui, &ip_string, &device_type),
+            None => infer_device_name_with_type(&reverse_name, &vendor_name_oui, &ip_string, &device_type),
+        };
+        vendor_name = v_tmp;
+    }
 
     let is_randomized = is_randomized_mac(&mac);
 
-    const TELL_TALE_PORTS: &[u16] = &[80, 443, 515, 554, 631, 3689, 9100];
-
-    let effective_open_ports: Vec<u16> = if !tcp_ports.is_empty() {
-        tcp_ports.clone()
-    } else {
-        let ip_addr: std::net::IpAddr = ip_string.parse().ok().unwrap_or(IpAddr::V4(ip));
-        let probes: Vec<_> = TELL_TALE_PORTS
-            .iter()
-            .copied()
-            .map(|port| {
-                let addr = SocketAddr::new(ip_addr, port);
-                async move {
-                    match tokio::time::timeout(
-                        Duration::from_millis(200),
-                        tokio::net::TcpStream::connect(addr),
-                    )
-                    .await
-                    {
-                        Ok(Ok(_)) => Some(port),
-                        _ => None,
+    // Skip aggressive probes if matched via registry
+    let mut effective_open_ports: Vec<u16> = tcp_ports;
+    if final_registry_match.is_none() {
+        const TELL_TALE_PORTS: &[u16] = &[80, 443, 515, 554, 631, 3689, 8008, 8060, 9100];
+        if effective_open_ports.is_empty() {
+            let ip_addr: std::net::IpAddr = ip_string.parse().ok().unwrap_or(IpAddr::V4(ip));
+            let probes: Vec<_> = TELL_TALE_PORTS
+                .iter()
+                .copied()
+                .map(|port| {
+                    let addr = SocketAddr::new(ip_addr, port);
+                    async move {
+                        match tokio::time::timeout(
+                            Duration::from_millis(200),
+                            tokio::net::TcpStream::connect(addr),
+                        )
+                        .await
+                        {
+                            Ok(Ok(_)) => Some(port),
+                            _ => None,
+                        }
                     }
-                }
-            })
-            .collect();
-        futures::future::join_all(probes)
-            .await
-            .into_iter()
-            .flatten()
-            .collect()
-    };
+                })
+                .collect();
+            effective_open_ports = futures::future::join_all(probes)
+                .await
+                .into_iter()
+                .flatten()
+                .collect();
+        }
+    }
 
     let port_label = identify_by_ports(&effective_open_ports);
 
     const GENERIC_PORT_LABELS: &[&str] = &[
-        "", "HTTP Device", "HTTPS Device", "HTTP Admin Panel", "Network Device (Web Interface)",
+        "", "HTTP Device", "HTTPS Device", "HTTP Admin Panel", "Network Device (Web Interface)", "Network Device",
     ];
-    let http_port = if GENERIC_PORT_LABELS.contains(&port_label.as_str()) {
-        if effective_open_ports.contains(&80) {
-            Some(80u16)
-        } else if effective_open_ports.contains(&8080) {
-            Some(8080u16)
-        } else if effective_open_ports.contains(&443) {
-            Some(443u16)
+    
+    let mut http_server_banner = None;
+    let mut http_hints = None;
+
+    if final_registry_match.is_none() {
+        let http_port = if GENERIC_PORT_LABELS.contains(&port_label.as_str()) {
+            if effective_open_ports.contains(&80) {
+                Some(80u16)
+            } else if effective_open_ports.contains(&8080) {
+                Some(8080u16)
+            } else if effective_open_ports.contains(&443) {
+                Some(443u16)
+            } else {
+                None
+            }
         } else {
             None
+        };
+
+        if let Some(port) = http_port {
+            let banner = quick_http_server_header(&ip_string, port).await;
+            let hints = fingerprints::classify_from_http_artifacts(
+                banner.as_deref(),
+                None,
+                "",
+                &effective_open_ports,
+            );
+            http_server_banner = banner;
+            http_hints = Some(hints);
         }
-    } else {
+    }
+
+    // --- Automated Vendor Overrides ---
+    if final_registry_match.is_none() && vendor_name.eq_ignore_ascii_case("unknown") {
+        if let Some(corporate) = identify_corporate_vendor(
+            mdns_str,
+            http_server_banner.as_deref().unwrap_or(""),
+        ) {
+            vendor_name = corporate;
+        }
+    }
+
+    // --- XML Model Extraction (Google Cast / SSDP) ---
+    let mut xml_model_name = None;
+    if final_registry_match.is_none() && (effective_open_ports.contains(&8008) || effective_open_ports.contains(&8060)) {
+        let port = if effective_open_ports.contains(&8008) { 8008 } else { 8060 };
+        let ip_cp = ip_string.clone();
+        
+        xml_model_name = match tokio::time::timeout(
+            Duration::from_millis(3200),
+            tokio::spawn(async move {
+                probe_model_xml(&ip_cp, port).await
+            })
+        ).await {
+            Ok(Ok(res)) => res,
+            _ => None,
+        };
+    }
+
+    let mut final_display_name = resolved_name;
+    if let Some(model) = xml_model_name {
+        final_display_name = model;
+    }
+
+    let quick_likely_type = if final_registry_match.is_some() {
         None
-    };
-
-    let (http_server_banner, http_hints) = if let Some(http_port) = http_port {
-        let banner = quick_http_server_header(&ip_string, http_port).await;
-        let hints = fingerprints::classify_from_http_artifacts(
-            banner.as_deref(),
-            None,
-            "",
-            &effective_open_ports,
-        );
-        (banner, Some(hints))
     } else {
-        (None, None)
-    };
-
-    let quick_likely_type = {
         let merged = merge_port_and_http_likely(
             &port_label,
             http_hints.as_ref().and_then(|h| h.likely.as_deref()),
@@ -1929,29 +1972,20 @@ async fn probe_host(
         if from_ports.as_deref().map(is_specific).unwrap_or(false) {
             from_ports
         } else {
-            // Try hostname-based classification across all name fields.
             let by_hostname = [
                 effective_mdns_hostname.as_deref(),
                 api_hostname.as_deref(),
-                Some(resolved_name.as_str()),
+                Some(final_display_name.as_str()),
             ]
             .into_iter()
             .flatten()
             .find_map(classify_from_hostname);
 
             by_hostname
-                .or_else(|| classify_from_vendor(&vendor_name, &effective_open_ports))
+                .or_else(|| classify_from_vendor(&vendor_name, &effective_open_ports, from_ports.as_deref().unwrap_or("")))
                 .or(from_ports)
         }
     };
-
-    let inline_http_banner = http_server_banner;
-
-    info!(
-        "[SCAN_TRACE_TYPE] Rust Fingerprint | IP: {}, Open Ports: {:?}, \
-         HTTP Banner: {:?}, Calculated Type: {:?}",
-        ip_string, effective_open_ports, inline_http_banner, quick_likely_type
-    );
 
     let open_ports_str = if effective_open_ports.is_empty() {
         None
@@ -1969,10 +2003,10 @@ async fn probe_host(
         ip_string.clone(),
         DiscoveredDevice {
             status: "Online".to_string(),
-            name: resolved_name,
+            name: final_display_name,
             ip: ip_string,
             mac,
-            vendor,
+            vendor: vendor_name.clone(),
             vendor_name,
             device_type,
             is_randomized,
@@ -1980,12 +2014,53 @@ async fn probe_host(
             mdns_primary_service: mdns_primary_opt,
             likely_type: quick_likely_type,
             hostname: api_hostname,
-            ssdp_server: inline_http_banner,
+            ssdp_server: http_server_banner,
             latency_ms: Some(latency_ms),
             open_ports: open_ports_str,
+            suggested_names: None,
         },
         latency_ms,
     ))
+}
+
+async fn probe_model_xml(ip: &str, port: u16) -> Option<String> {
+    let _permit = xml_probe_sem().acquire().await.ok();
+    
+    let path = if port == 8008 { "/ssdescription.xml" } else { "/device-desc.xml" };
+    let url = format!("http://{}:{}{}", ip, port, path);
+    
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_millis(1500))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .ok()?;
+    
+    let result = tokio::time::timeout(Duration::from_millis(3000), async {
+        let resp = match tokio::time::timeout(
+            Duration::from_millis(1500),
+            client.get(&url).send()
+        ).await {
+            Ok(Ok(r)) => r,
+            _ => return None,
+        };
+        
+        if !resp.status().is_success() {
+            return None;
+        }
+
+        let body = match tokio::time::timeout(
+            Duration::from_millis(1500),
+            resp.text()
+        ).await {
+            Ok(Ok(b)) => b,
+            _ => return None,
+        };
+        
+        extract_xml_tag(&body, "friendlyName")
+            .or_else(|| extract_xml_tag(&body, "modelName"))
+    }).await.ok().flatten();
+
+    result
 }
 
 async fn quick_http_server_header(ip: &str, port: u16) -> Option<String> {
@@ -2509,6 +2584,7 @@ async fn scan_local_network_inner(
                     ssdp_server: None,
                     latency_ms: Some(1.0),
                     open_ports: None,
+                    suggested_names: None,
                 };
 
                 g.ping.insert(ip_str.clone(), (dev.clone(), 1.0));

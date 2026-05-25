@@ -138,6 +138,8 @@ export type DeviceRow = {
   displayName?: string | null;
   /** Custom mapped icon URL for this device. */
   customIcon?: string | null;
+  /** Smart name suggestions from the backend engine. */
+  suggestedNames?: string[] | null;
   /** Host replied on the current / last completed scan pass. */
   isOnline: boolean;
   /** First time this identity (MAC / IP key) appeared in our persisted history. */
@@ -165,6 +167,8 @@ type DiscoveredDevicePayload = {
   hostname?: string | null;
   /** Raw SSDP SERVER: banner from UPnP M-SEARCH response. */
   ssdpServer?: string | null;
+  /** Smart name suggestions from the backend engine (camelCase in IPC). */
+  suggestedNames?: string[] | null;
 };
 
 type ScanStartedPayload = {
@@ -352,6 +356,7 @@ function mapDiscoveredToRow(
     likelyType: p.likelyType?.trim() || null,
     hostname: p.hostname?.trim() || null,
     ssdpServer: p.ssdpServer?.trim() || null,
+    suggestedNames: p.suggestedNames,
     customName: customNames[p.ip]?.trim() || null,
     isOnline: true,
     isNew: false,
@@ -497,6 +502,7 @@ function mergeScanProgress(
         ssdpServer: inc.ssdpServer?.trim() || existing.ssdpServer || null,
         interrogationName:
           inc.interrogationName?.trim() || existing.interrogationName || null,
+        suggestedNames: inc.suggestedNames || existing.suggestedNames,
         isNew: false,
         isOnline: true,
         lastSeen: now,
@@ -529,6 +535,7 @@ function mergeScanProgress(
         ssdpServer: inc.ssdpServer?.trim() || prior.ssdpServer || null,
         interrogationName:
           inc.interrogationName?.trim() || prior.interrogationName || null,
+        suggestedNames: inc.suggestedNames || prior.suggestedNames,
         isNew: false,
         isOnline: true,
         lastSeen: now,
@@ -632,6 +639,8 @@ type ServerDevice = {
   displayName?: string | null;
   /** Custom mapped icon URL for this device. */
   customIcon?: string | null;
+  /** Smart name suggestions from the backend engine. */
+  suggestedNames?: string[] | null;
   firstSeen?: number | null;
   lastSeen?: number | null;
   /** True when the device was seen in the most recently completed scan. */
@@ -677,6 +686,7 @@ async function browserLoadDevices(): Promise<DeviceRow[]> {
           customName: cn,
           displayName: r.displayName?.trim() ?? null,
           customIcon: r.customIcon,
+          suggestedNames: r.suggestedNames,
           isOnline: online,
           isNew: false,
           lastSeen: r.lastSeen ?? null,
@@ -757,9 +767,10 @@ const SCAN_TIMEOUT_MESSAGE =
   "Scan timed out. The network might be too large or restricted.";
 const JS_SCAN_TIMEOUT_BY_MODE: Record<ScanMode, number> = {
   // Keep frontend timeout above Rust's 90s cap so backend completes first.
-  silent: 140_000,
-  aggressive: 120_000,
-  deep: 300_000,
+  // Doubled to ensure even slow asynchronous port drops are captured.
+  silent: 280_000,
+  aggressive: 240_000,
+  deep: 600_000,
 };
 const SCAN_RETRY_ATTEMPTS = 10;
 const SCAN_RETRY_DELAY_MS = 500;

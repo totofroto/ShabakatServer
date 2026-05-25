@@ -16,7 +16,7 @@ pub async fn list_devices(
 ) -> impl IntoResponse {
     log::info!("[API] Fetching all devices from database");
     
-    let db_rows = match dev_store::list_devices_async(state.db.clone(), false).await {
+    let mut db_rows = match dev_store::list_devices_async(state.db.clone(), false).await {
         Ok(rows) => rows,
         Err(e) => {
             log::error!("[API] Failed to list devices: {}", e);
@@ -26,12 +26,14 @@ pub async fn list_devices(
 
     if db_rows.is_empty() {
         // Fallback to in-memory devices if DB is empty (e.g. first scan in progress)
-        let mem_devices = state.devices.lock().unwrap();
+        let mut mem_devices = state.devices.lock().unwrap().clone();
         if !mem_devices.is_empty() {
             log::info!("[API] DB empty, returning {} devices from memory", mem_devices.len());
             // Map DiscoveredDevice to a structure compatible with the frontend's expected format
             let now = crate::storage::now_ms();
-            let mapped: Vec<serde_json::Value> = mem_devices.iter().map(|d| {
+            let mapped: Vec<serde_json::Value> = mem_devices.iter_mut().map(|d| {
+                d.generate_suggested_names();
+                
                 json!({
                     "id": 0,
                     "mac": d.mac,
@@ -47,6 +49,7 @@ pub async fn list_devices(
                     "mdnsHostname": d.mdns_hostname,
                     "ssdpServer": d.ssdp_server,
                     "acknowledged": false,
+                    "suggestedNames": d.suggested_names,
                 })
             }).collect();
             return Json(json!(mapped)).into_response();
@@ -54,6 +57,9 @@ pub async fn list_devices(
     }
 
     log::info!("[API] Returning {} devices from database", db_rows.len());
+    for dev in &mut db_rows {
+        dev.generate_suggested_names();
+    }
     Json(json!(db_rows)).into_response()
 }
 
@@ -62,7 +68,10 @@ pub async fn get_device(
     Path(mac): Path<String>,
 ) -> impl IntoResponse {
     match dev_store::get_device_by_mac_async(state.db.clone(), mac).await {
-        Ok(Some(row)) => Json(row).into_response(),
+        Ok(Some(mut row)) => {
+            row.generate_suggested_names();
+            Json(row).into_response()
+        },
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }

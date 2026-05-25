@@ -1,4 +1,78 @@
 use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::sync::OnceLock;
+use log::{info, warn};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceProfile {
+    pub name: String,
+    pub device_type: String,
+    pub vendor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fingerprint {
+    pub mac_prefixes: Option<Vec<String>>,
+    pub mdns_keywords: Option<Vec<String>>,
+    pub profile: DeviceProfile,
+}
+
+pub struct FingerprintRegistry {
+    fingerprints: Vec<Fingerprint>,
+}
+
+impl FingerprintRegistry {
+    pub fn load() -> Self {
+        let path = "fingerprints.json";
+        match fs::read_to_string(path) {
+            Ok(content) => match serde_json::from_str::<Vec<Fingerprint>>(&content) {
+                Ok(fingerprints) => {
+                    info!("Loaded {} fingerprints from {}", fingerprints.len(), path);
+                    FingerprintRegistry { fingerprints }
+                }
+                Err(e) => {
+                    warn!("Failed to parse fingerprints.json: {}. Using empty registry.", e);
+                    FingerprintRegistry { fingerprints: Vec::new() }
+                }
+            },
+            Err(e) => {
+                warn!("Failed to read fingerprints.json: {}. Using empty registry.", e);
+                FingerprintRegistry { fingerprints: Vec::new() }
+            }
+        }
+    }
+
+    pub fn match_device(&self, mac: &str, mdns: &str) -> Option<DeviceProfile> {
+        let mac_upper = mac.to_uppercase();
+        let mdns_lower = mdns.to_lowercase();
+
+        for fp in &self.fingerprints {
+            // Match by MAC prefix
+            if let Some(prefixes) = &fp.mac_prefixes {
+                if prefixes.iter().any(|p| mac_upper.starts_with(&p.to_uppercase())) {
+                    return Some(fp.profile.clone());
+                }
+            }
+
+            // Match by mDNS keywords
+            if let Some(keywords) = &fp.mdns_keywords {
+                if keywords.iter().any(|k| mdns_lower.contains(&k.to_lowercase())) {
+                    return Some(fp.profile.clone());
+                }
+            }
+        }
+
+        None
+    }
+}
+
+static REGISTRY: OnceLock<FingerprintRegistry> = OnceLock::new();
+
+pub fn get_registry() -> &'static FingerprintRegistry {
+    REGISTRY.get_or_init(FingerprintRegistry::load)
+}
 
 /// Hints from HTTP `Server` / HTML / body keyword scans. Applied after port-based ID.
 #[derive(Debug, Default, Clone)]
@@ -282,10 +356,9 @@ pub fn classify_from_hostname(hostname: &str) -> Option<String> {
 
 /// Returns a `likely_type` string based on the OUI vendor name.
 ///
-/// Yamaha and Raspberry Pi are always classified. Samsung and Apple are only
-/// promoted when `open_ports` is empty (no port scan yet) to avoid stomping
-/// a more specific port-based label.
-pub fn classify_from_vendor(vendor: &str, open_ports: &[u16]) -> Option<String> {
+/// Yamaha and Raspberry Pi are always classified. Samsung and Apple are 
+/// promoted even with open ports if the port-based label is generic.
+pub fn classify_from_vendor(vendor: &str, open_ports: &[u16], current_label: &str) -> Option<String> {
     let v = vendor.trim();
     if v.is_empty() || v.eq_ignore_ascii_case("unknown") {
         return None;
@@ -307,7 +380,7 @@ pub fn classify_from_vendor(vendor: &str, open_ports: &[u16]) -> Option<String> 
     if l.contains("xiaomi") || l.contains("beijing xiaomi") {
         return Some("Xiaomi Device".to_string());
     }
-    if l.contains("lg innotek") {
+    if l.contains("lg innotek") || l.contains("lg electronics") {
         return Some("Smart TV".to_string());
     }
     if l.contains("fiio") {
@@ -320,14 +393,46 @@ pub fn classify_from_vendor(vendor: &str, open_ports: &[u16]) -> Option<String> 
         return Some("Smart Device".to_string());
     }
 
-    // Port-data guard: only use vendor alone when there is no port signal yet
-    if open_ports.is_empty() {
+    // Port-data guard: promote vendor when there is no port signal, or if the port signal is generic
+    if open_ports.is_empty() || is_generic_port_fingerprint(current_label) {
         if l.contains("samsung") {
             return Some("Samsung Device".to_string());
         }
         if l.contains("apple") {
             return Some("Apple Device".to_string());
         }
+        if l.contains("google") {
+            return Some("Google Device".to_string());
+        }
+    }
+
+    None
+}
+
+/// If the MAC OUI is unknown, we can often infer the vendor from hostname or HTTP banners.
+pub fn identify_corporate_vendor(hostname: &str, http_banner: &str) -> Option<String> {
+    let combined = format!("{} {}", hostname, http_banner).to_lowercase();
+    
+    if combined.contains("samsung") || combined.contains("tizen") {
+        return Some("Samsung".to_string());
+    }
+    if combined.contains("apple") || combined.contains("iphone") || combined.contains("ipad") || combined.contains("macbook") || combined.contains("iwatch") {
+        return Some("Apple".to_string());
+    }
+    if combined.contains("google") || combined.contains("pixel") || combined.contains("chromecast") {
+        return Some("Google".to_string());
+    }
+    if combined.contains("sony") || combined.contains("bravia") || combined.contains("playstation") {
+        return Some("Sony".to_string());
+    }
+    if combined.contains("microsoft") || combined.contains("windows") {
+        return Some("Microsoft".to_string());
+    }
+    if combined.contains("amazon") || combined.contains("echo") || combined.contains("alexa") || combined.contains("kindle") {
+        return Some("Amazon".to_string());
+    }
+    if combined.contains("lg electronics") || combined.contains("webos") {
+        return Some("LG".to_string());
     }
 
     None
@@ -707,11 +812,11 @@ mod tests {
     #[test]
     fn vendor_yamaha_always() {
         assert_eq!(
-            classify_from_vendor("Yamaha Corporation", &[80, 443]),
+            classify_from_vendor("Yamaha Corporation", &[80, 443], "HTTP Device"),
             Some("AV Receiver".to_string())
         );
         assert_eq!(
-            classify_from_vendor("Yamaha Corporation", &[]),
+            classify_from_vendor("Yamaha Corporation", &[], ""),
             Some("AV Receiver".to_string())
         );
     }
@@ -719,7 +824,7 @@ mod tests {
     #[test]
     fn vendor_raspberry_always() {
         assert_eq!(
-            classify_from_vendor("Raspberry Pi Trading Ltd", &[22, 80]),
+            classify_from_vendor("Raspberry Pi Trading Ltd", &[22, 80], "Linux Server"),
             Some("Raspberry Pi".to_string())
         );
     }
@@ -727,15 +832,23 @@ mod tests {
     #[test]
     fn vendor_samsung_no_ports() {
         assert_eq!(
-            classify_from_vendor("Samsung Electronics", &[]),
+            classify_from_vendor("Samsung Electronics", &[], ""),
             Some("Samsung Device".to_string())
         );
     }
 
     #[test]
-    fn vendor_samsung_with_ports_no_override() {
+    fn vendor_samsung_with_generic_port_label() {
         assert_eq!(
-            classify_from_vendor("Samsung Electronics", &[80, 443]),
+            classify_from_vendor("Samsung Electronics", &[80, 443], "HTTP Device"),
+            Some("Samsung Device".to_string())
+        );
+    }
+
+    #[test]
+    fn vendor_samsung_with_specific_port_no_override() {
+        assert_eq!(
+            classify_from_vendor("Samsung Electronics", &[80, 443], "Plex Media Server"),
             None
         );
     }
@@ -743,24 +856,27 @@ mod tests {
     #[test]
     fn vendor_apple_no_ports() {
         assert_eq!(
-            classify_from_vendor("Apple, Inc.", &[]),
+            classify_from_vendor("Apple, Inc.", &[], ""),
             Some("Apple Device".to_string())
         );
     }
 
     #[test]
-    fn vendor_apple_with_ports_no_override() {
-        assert_eq!(classify_from_vendor("Apple, Inc.", &[62078]), None);
+    fn vendor_apple_with_generic_port_label() {
+        assert_eq!(
+            classify_from_vendor("Apple, Inc.", &[62078], "Network Device"),
+            Some("Apple Device".to_string())
+        );
     }
 
     #[test]
     fn vendor_unknown_returns_none() {
-        assert_eq!(classify_from_vendor("Unknown", &[]), None);
-        assert_eq!(classify_from_vendor("", &[]), None);
+        assert_eq!(classify_from_vendor("Unknown", &[], ""), None);
+        assert_eq!(classify_from_vendor("", &[], ""), None);
     }
 
     #[test]
     fn vendor_unrecognized_returns_none() {
-        assert_eq!(classify_from_vendor("Generic Corp", &[]), None);
+        assert_eq!(classify_from_vendor("Generic Corp", &[], ""), None);
     }
 }

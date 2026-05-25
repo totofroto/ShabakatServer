@@ -26,7 +26,32 @@ pub struct DiscoveredDevice {
     pub latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_ports: Option<String>,
+    pub suggested_names: Option<Vec<String>>,
 }
+
+impl DiscoveredDevice {
+    pub fn generate_suggested_names(&mut self) {
+        let mut suggestions = Vec::new();
+        
+        let v_lower = self.vendor_name.to_lowercase();
+        if v_lower.contains("samsung") {
+            suggestions.push("Samsung Galaxy Z Fold 7".to_string());
+            suggestions.push("Samsung Phone".to_string());
+        } else if v_lower.contains("apple") {
+            suggestions.push("iPhone 16 Pro".to_string());
+            suggestions.push("iPad Pro".to_string());
+        }
+        
+        if let Some(h) = &self.hostname {
+            suggestions.push(h.clone());
+        } else if let Some(m) = &self.mdns_hostname {
+            suggestions.push(m.clone());
+        }
+
+        self.suggested_names = Some(suggestions);
+    }
+}
+
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -92,7 +117,37 @@ pub struct DeviceRecord {
     pub display_name: Option<String>,
     pub is_online: bool,
     pub custom_icon: Option<String>,
+    pub suggested_names: Option<Vec<String>>,
 }
+
+impl DeviceRecord {
+    pub fn generate_suggested_names(&mut self) {
+        let mut suggestions = Vec::new();
+        
+        if let Some(vendor) = &self.vendor {
+            let v_lower = vendor.to_lowercase();
+            if v_lower.contains("samsung") {
+                suggestions.push("Samsung Galaxy Z Fold 7".to_string());
+                suggestions.push("Samsung Phone".to_string());
+            } else if v_lower.contains("apple") {
+                suggestions.push("iPhone 16 Pro".to_string());
+                suggestions.push("iPad Pro".to_string());
+            }
+        }
+        
+        // Always include the current hostname as the last suggestion in the list.
+        if let Some(hostname) = &self.hostname {
+            suggestions.push(hostname.clone());
+        } else if let Some(mdns) = &self.mdns_hostname {
+            suggestions.push(mdns.clone());
+        } else if let Some(int_name) = &self.interrogation_name {
+            suggestions.push(int_name.clone());
+        }
+
+        self.suggested_names = Some(suggestions);
+    }
+}
+
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

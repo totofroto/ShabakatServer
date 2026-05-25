@@ -281,7 +281,7 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
 
     const { scanId } = res as { scanId: string };
     const mode = (args.mode as string) ?? "silent";
-    const timeoutMs = mode === "deep" ? 300_000 : 140_000;
+    const timeoutMs = mode === "deep" ? 600_000 : 280_000;
 
     return new Promise<T>((resolve, reject) => {
       const cleanup = () => {

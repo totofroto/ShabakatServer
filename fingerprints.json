@@ -1,0 +1,37 @@
+[
+  {
+    "mdns_keywords": ["samsung", "tizen", "samsungtv", "samsung tv"],
+    "mac_prefixes": ["38:E0:8E", "48:44:F7", "50:85:69"],
+    "profile": {
+      "name": "Samsung Device",
+      "device_type": "phone",
+      "vendor": "Samsung"
+    }
+  },
+  {
+    "mdns_keywords": ["apple", "iphone", "ipad", "macbook", "iwatch", "appletv"],
+    "mac_prefixes": ["00:03:93", "00:05:02", "00:0A:27"],
+    "profile": {
+      "name": "Apple Device",
+      "device_type": "laptop",
+      "vendor": "Apple"
+    }
+  },
+  {
+    "mdns_keywords": ["raspberry"],
+    "mac_prefixes": ["B8:27:EB", "DC:A6:32", "E4:5F:01"],
+    "profile": {
+      "name": "Raspberry Pi",
+      "device_type": "iot",
+      "vendor": "Raspberry Pi"
+    }
+  },
+  {
+    "mdns_keywords": ["ubiquiti", "unifi"],
+    "profile": {
+      "name": "Ubiquiti Network Device",
+      "device_type": "iot",
+      "vendor": "Ubiquiti"
+    }
+  }
+]

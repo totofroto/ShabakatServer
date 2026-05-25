@@ -1203,7 +1203,7 @@ export function DevicesPage() {
     scanButtonCooldownTimer.current = window.setTimeout(() => {
       setIsScanButtonCooldown(false);
       scanButtonCooldownTimer.current = null;
-    }, 10_000);
+    }, 20_000);
     setActiveScanMode(scanMode);
     try {
       if (isTauri()) {

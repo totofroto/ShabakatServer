@@ -97,11 +97,16 @@ pub async fn trigger_scan(
                 // Broadcast scan_finished FIRST — the frontend releases its isScanning
                 // lock here. Never block this broadcast on a DB write; persistence
                 // failures must not freeze the UI.
+                let mut devices_with_suggestions = result.devices.clone();
+                for d in &mut devices_with_suggestions {
+                    d.generate_suggested_names();
+                }
+
                 let _ = broadcast_tx.send(json!({
                     "event": "scan_finished",
                     "data": {
                         "scanId": scan_id,
-                        "devices": result.devices,
+                        "devices": devices_with_suggestions,
                         "deviceCount": result.devices.len(),
                         "scannedHosts": result.scanned_hosts,
                         "averageLatencyMs": result.average_latency_ms,
@@ -195,14 +200,24 @@ pub async fn relay_scan_events(
 ) {
     while let Some(event) = rx.recv().await {
         let msg = match event {
-            ScanEvent::DeviceDiscovered(payload) => json!({
-                "event": "device_discovered",
-                "data": payload,
-            }),
-            ScanEvent::Progress(payload) => json!({
-                "event": "scan_progress",
-                "data": payload,
-            }),
+            ScanEvent::DeviceDiscovered(mut payload) => {
+                for d in &mut payload.devices {
+                    d.generate_suggested_names();
+                }
+                json!({
+                    "event": "device_discovered",
+                    "data": payload,
+                })
+            }
+            ScanEvent::Progress(mut payload) => {
+                for d in &mut payload.devices {
+                    d.generate_suggested_names();
+                }
+                json!({
+                    "event": "scan_progress",
+                    "data": payload,
+                })
+            }
         };
         let _ = tx.send(msg);
     }
