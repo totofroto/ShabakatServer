@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from "react";
 import { Loader2, Server, Shield, Smartphone, Laptop, Tv, Router, Globe, Cpu, X, Info, Activity, Fingerprint, Zap } from "lucide-react";
 import * as d3 from "d3";
-import { subscribeTelemetryEvents, LatencyUpdate } from "@/lib/transport";
+import { subscribeTelemetryEvents, LatencyUpdate, transport } from "@/lib/transport";
 
 type TopologyNode = d3.SimulationNodeDatum & {
   id: string;
@@ -72,7 +72,7 @@ export function TopologyMap() {
 
   const fetchTopology = async () => {
     try {
-      const res = await fetch("/api/network/topology");
+      const res = await transport.fetch("/api/network/topology");
       if (!res.ok) throw new Error("API error");
       const json = await res.json();
       

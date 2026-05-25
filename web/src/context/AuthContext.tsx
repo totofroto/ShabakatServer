@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { transport } from "../lib/transport";
+import { API_BASE_URL } from "../lib/constants";
 
 interface User {
   sub: string;
@@ -53,7 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = () => {
-    window.location.href = "/api/auth/google/login";
+    window.location.href = `${API_BASE_URL}/api/auth/google/login`;
   };
 
   const logout = async () => {

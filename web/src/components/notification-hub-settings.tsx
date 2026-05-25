@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, Send, Mail, Link2, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { transport } from '@/lib/transport';
 
 interface ProviderConfig {
   id: string;
@@ -16,7 +17,7 @@ export const NotificationHubSettings: React.FC = () => {
 
   // 1. Fetch current live structural channel settings on mount
   useEffect(() => {
-    fetch('/api/notifications/config')
+    transport.fetch('/api/notifications/config')
       .then((res) => res.json())
       .then((data) => {
         setProviders(data);
@@ -46,7 +47,7 @@ export const NotificationHubSettings: React.FC = () => {
   const saveProviderSettings = async (provider: ProviderConfig) => {
     setSaveStatus((prev) => ({ ...prev, [provider.id]: 'saving' }));
     try {
-      const res = await fetch('/api/notifications/config', {
+      const res = await transport.fetch('/api/notifications/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -72,7 +73,7 @@ export const NotificationHubSettings: React.FC = () => {
     setTestingId(provider.id);
     try {
       // Leverages manual mock routes or explicit test execution payloads
-      const res = await fetch('/api/tools/test-notification', {
+      const res = await transport.fetch('/api/tools/test-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

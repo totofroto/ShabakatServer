@@ -22,7 +22,7 @@ echo "Loading image on WADDAN..."
 ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo docker load -i /tmp/shabakat-server.tar.gz'
 
 echo "Restarting shabakat-server on WADDAN..."
-ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo docker stop shabakat-server || true && sudo docker rm shabakat-server || true && cd /volume1/Docker/shabakat-server && sudo docker compose up -d'
+ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo mkdir -p /volume1/Docker/shabakat-server/data && sudo chmod -R 777 /volume1/Docker/shabakat-server/data && sudo docker stop shabakat-server || true && sudo docker rm shabakat-server || true && cd /volume1/Docker/shabakat-server && sudo docker compose up -d'
 
 echo "Verifying logs..."
 ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo docker logs --tail 10 shabakat-server'

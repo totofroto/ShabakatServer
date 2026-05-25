@@ -18,9 +18,8 @@ import {
   Terminal,
   Tv,
 } from "lucide-react";
-import { listen } from "@/lib/transport";
+import { listen, transport, invoke } from "@/lib/transport";
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@/lib/transport";
 import type { DeviceRow } from "@/hooks/useNetworkScan";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/context/LanguageContext";
@@ -219,11 +218,11 @@ export function DeviceDetailsPanel({
   const deepScanUnlistenRef = useRef<(() => void) | null>(null);
 
   type HistoryItem = {
-    scan_id: string;
-    scanned_at: number;
+    scanId: string;
+    scannedAt: number;
     ip: string;
-    is_online: boolean;
-    latency_ms: number | null;
+    isOnline: boolean;
+    latencyMs: number | null;
   };
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [dnsStats, setDnsStats] = useState<{ total_queries: number; blocked_queries: number } | null>(null);
@@ -260,7 +259,7 @@ export function DeviceDetailsPanel({
     formData.append("file", file);
 
     try {
-      const res = await fetch("/api/assets/upload", {
+      const res = await transport.fetch("/api/assets/upload", {
         method: "POST",
         body: formData,
       });
@@ -754,12 +753,12 @@ export function DeviceDetailsPanel({
             {history.length > 0 ? (
               <div className="bg-surface rounded-xl overflow-hidden mx-4">
                 {history.map((h, i) => (
-                  <div key={h.scan_id || i}>
+                  <div key={h.scanId || i}>
                     {i > 0 && <div className="h-px bg-separator ml-4" />}
                     <div className="flex justify-between items-center px-4 py-3">
                       <div className="flex flex-col">
                         <span className="text-[15px] text-primary">
-                          {new Date(h.scanned_at).toLocaleString()}
+                          {new Date(h.scannedAt).toLocaleString()}
                         </span>
                         <span className="text-[12px] text-tertiary font-mono">{h.ip}</span>
                       </div>
@@ -767,14 +766,14 @@ export function DeviceDetailsPanel({
                         <span
                           className={cn(
                             "text-[14px] font-semibold",
-                            h.is_online ? "text-online" : "text-error",
+                            h.isOnline ? "text-online" : "text-error",
                           )}
                         >
-                          {h.is_online ? "Online" : "Offline"}
+                          {h.isOnline ? "Online" : "Offline"}
                         </span>
-                        {h.latency_ms != null && (
+                        {h.latencyMs != null && (
                           <span className="text-[12px] text-tertiary">
-                            {h.latency_ms.toFixed(1)} ms
+                            {h.latencyMs.toFixed(1)} ms
                           </span>
                         )}
                       </div>

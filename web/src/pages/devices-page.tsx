@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   Zap,
 } from "lucide-react";
-import { invoke, isTauri } from "@/lib/transport";
+import { invoke, isTauri, transport } from "@/lib/transport";
 import { listen } from "@/lib/transport";
 import { vibrate } from "@tauri-apps/plugin-haptics";
 import {
@@ -808,7 +808,7 @@ export function DevicesPage() {
   const handleSaveAlias = useCallback(async () => {
     if (!aliasingDevice) return;
     try {
-      await fetch("/api/devices/alias", {
+      await transport.fetch("/api/devices/alias", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2008,7 +2008,7 @@ export function DevicesPage() {
                     customName: name.trim() || null,
                   });
                   // Persist to server
-                  await fetch(`/api/devices/${selectedDevice.mac}`, {
+                  await transport.fetch(`/api/devices/${selectedDevice.mac}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ custom_name: name.trim() || null }),
@@ -2019,7 +2019,7 @@ export function DevicesPage() {
                     customIcon: url,
                   });
                   // Persist to server
-                  await fetch(`/api/devices/${selectedDevice.mac}`, {
+                  await transport.fetch(`/api/devices/${selectedDevice.mac}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ custom_icon: url }),
@@ -2107,7 +2107,7 @@ export function DevicesPage() {
                     customName: name.trim() || null,
                   });
                   // Persist to server
-                  await fetch(`/api/devices/${selectedDevice.mac}`, {
+                  await transport.fetch(`/api/devices/${selectedDevice.mac}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ custom_name: name.trim() || null }),
@@ -2118,7 +2118,7 @@ export function DevicesPage() {
                     customIcon: url,
                   });
                   // Persist to server
-                  await fetch(`/api/devices/${selectedDevice.mac}`, {
+                  await transport.fetch(`/api/devices/${selectedDevice.mac}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ custom_icon: url }),

@@ -1,42 +1,36 @@
 use axum::{
     body::Body,
-    extract::{ConnectInfo, State},
-    http::{Request, StatusCode},
+    extract::State,
+    http::{HeaderMap, Request, StatusCode},
     middleware::Next,
     response::Response,
 };
 use axum_extra::extract::cookie::CookieJar;
 use jsonwebtoken::{decode, DecodingKey, Validation};
-use std::net::SocketAddr;
 
 use crate::api::auth::Claims;
 use crate::AppState;
 
+pub fn validate_token(token: &str, secret: &str) -> bool {
+    let decoding_key = DecodingKey::from_secret(secret.as_bytes());
+    let mut validation = Validation::default();
+    validation.set_issuer(&["shabakat-server"]);
+    validation.set_audience(&["shabakat-admin"]);
+
+    decode::<Claims>(token, &decoding_key, &validation).is_ok()
+}
+
 pub async fn auth_middleware(
-    State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     jar: CookieJar,
+    headers: HeaderMap,
+    State(state): State<AppState>,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
     let path = req.uri().path();
 
-    // DIAGNOSTIC LOG
-    if let Some(auth_header) = req.headers().get(axum::http::header::AUTHORIZATION) {
-        log::info!("[AUTH_DEBUG] {} {} -> Received Auth header: {:?}", req.method(), path, auth_header);
-    } else {
-        log::warn!("[AUTH_DEBUG] {} {} -> NO Authorization header present!", req.method(), path);
-        log::info!("[AUTH_DEBUG] All headers: {:?}", req.headers());
-    }
-
-    // Whitelist authentication routes - MUST happen before token check
+    // Whitelist authentication routes
     if !is_protected_route(path) {
-        return Ok(next.run(req).await);
-    }
-
-    // Check if auth is disabled globally
-    if state.config.disable_auth {
-        log::info!("[AUTH_DEBUG] Auth disabled globally. Allowing request to {}", path);
         return Ok(next.run(req).await);
     }
 
@@ -45,61 +39,51 @@ pub async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
-    // Check for local bypass if enabled
-    if state.config.auth_bypass_local && is_local_ip(addr.ip()) {
-        log::info!("[AUTH_DEBUG] Local bypass active for {}. Allowing request to {}", addr.ip(), path);
-        return Ok(next.run(req).await);
+    // 1. Try Authorization header first
+    let mut token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+
+    // 2. Fallback to admin_token cookie from CookieJar
+    if token.is_none() {
+        token = jar.get("admin_token").map(|c| c.value().to_string());
     }
 
-    // Check cookie or authorization header
-    let mut token = jar
-        .get("admin_token")
-        .or_else(|| jar.get("session"))
-        .map(|c| {
-            log::debug!("[AUTH_DEBUG] Found {} cookie for {}", c.name(), path);
-            c.value().to_string()
-        })
-        .or_else(|| {
-            req.headers()
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.strip_prefix("Bearer "))
-                .map(|s| {
-                    log::info!("[AUTH_DEBUG] Found Authorization Bearer token for {}", path);
-                    s.to_string()
-                })
-        });
-
-    // Re-hydration layer: check database if token is missing
+    // 3. Last resort: Manual Cookie header extraction (bypass CookieJar if it fails)
     if token.is_none() {
-        if let Ok(Some(db_token)) = crate::storage::settings::get_setting(state.db.clone(), "active_admin_session").await {
-            if !db_token.is_empty() {
-                log::info!("[AUTH_DEBUG] Re-hydrating session from DB for {}", path);
-                token = Some(db_token);
+        if let Some(cookie_header) = headers.get(axum::http::header::COOKIE).and_then(|h| h.to_str().ok()) {
+            for cookie in cookie_header.split(';') {
+                let cookie = cookie.trim();
+                if let Some(val) = cookie.strip_prefix("admin_token=") {
+                    token = Some(val.to_string());
+                    log::info!("[AUTH_DEBUG] Recovered token from raw Cookie header");
+                    break;
+                }
             }
         }
     }
 
-    let token = match token {
-        Some(t) => t,
-        None => {
-            log::warn!("[AUTH_DEBUG] No authentication token found for {}", path);
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-    };
-
-    let decoding_key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
-    let mut validation = Validation::default();
-    validation.set_issuer(&["shabakat-server"]);
-    validation.set_audience(&["shabakat-admin"]);
-
-    match decode::<Claims>(&token, &decoding_key, &validation) {
-        Ok(_) => Ok(next.run(req).await),
-        Err(e) => {
-            log::error!("[AUTH_DEBUG] JWT decoding failed for {}: {:?}", path, e);
-            Err(StatusCode::UNAUTHORIZED)
-        }
+    // Debug print
+    if token.is_none() {
+        let cookie_header = headers.get(axum::http::header::COOKIE).and_then(|h| h.to_str().ok());
+        log::warn!(
+            "[AUTH_DEBUG] Unauthorized access attempt: Path={}, CookiesPresent={}, CookieHeader={:?}",
+            path,
+            jar.iter().count() > 0,
+            cookie_header
+        );
     }
+
+    if let Some(t) = token {
+        if validate_token(&t, &state.config.jwt_secret) {
+            return Ok(next.run(req).await);
+        }
+        log::warn!("[AUTH_DEBUG] Invalid token or cookie for path: {}", path);
+    }
+
+    Err(StatusCode::UNAUTHORIZED)
 }
 
 fn is_protected_route(path: &str) -> bool {
@@ -116,7 +100,6 @@ fn is_protected_route(path: &str) -> bool {
     }
 
     // General auth routes (like login/callback if they don't match above)
-    // but we want to be careful not to whitelist everything under /api/auth
     if path.contains("/auth") && (path.contains("/login") || path.contains("/callback")) {
         return false;
     }
@@ -124,13 +107,3 @@ fn is_protected_route(path: &str) -> bool {
     true
 }
 
-fn is_local_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(ipv4) => {
-            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
-        }
-        std::net::IpAddr::V6(ipv6) => {
-            ipv6.is_loopback() || (ipv6.segments()[0] & 0xff00) == 0xfe00
-        }
-    }
-}

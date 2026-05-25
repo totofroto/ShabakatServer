@@ -2,7 +2,7 @@
 name: shabakat-server-pro
 description: >
   Expert engineering assistant for the ShabakatServer project — the always-on Docker
-  network scanner that runs on WADDAN (Asustor NAS, 192.168.254.18:7779). Use this skill
+  network scanner that runs on WADDAN (Asustor NAS, 192.168.254.18.nip.io:7779). Use this skill
   for any task involving: Axum REST API, WebSocket events, SQLite schema, Rust scanner
   (server variant), Docker deployment, docker-compose, scan scheduler, Telegram alerts,
   webhook notifications, historical timeline API, or any file under ShabakatServer/src/.
@@ -15,7 +15,7 @@ description: >
 ## What This Project Is
 
 ShabakatServer is a **standalone Rust binary** that runs as a Docker container on WADDAN
-(Asustor NAS, x86_64, IP: 192.168.254.18, port 7779). It is NOT the Tauri app.
+(Asustor NAS, x86_64, IP: 192.168.254.18, port 7779, URL: http://192.168.254.18.nip.io:7779). It is NOT the Tauri app.
 It shares scanner DNA with the Tauri app but has NO Tauri, NO JNI, NO Android workarounds.
 
 **Do not copy Android-specific code here. Do not add Tauri dependencies.**
@@ -226,7 +226,7 @@ Alert format:
 MAC: AA:BB:CC:DD:EE:FF
 IP: 192.168.254.99
 Vendor: Unknown
-Shabakat · http://192.168.254.18:7779
+Shabakat · http://192.168.254.18.nip.io:7779
 ```
 
 ---

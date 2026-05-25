@@ -66,7 +66,8 @@ async fn main() {
 
     let config = Arc::new(Config::from_env());
 
-    let db = storage::AppDb::new("./shabakat_server.db").await;
+    let db_path = format!("{}/shabakat.db", config.data_dir);
+    let db = storage::AppDb::new(&db_path).await;
     scanner::init_vendor_map().expect("failed to load vendor map");
 
     let (broadcast_tx, _) = broadcast::channel(256);

@@ -1,6 +1,6 @@
-# PROJECT HANDOFF & ARCHITECTURE SYNC (V1.4.1)
-**Date:** May 24, 2026
-**System Status:** Container-hardened Network-Agnostic Passive Digital Fence, Trait-Based Notification Hub, and Hardened Google OAuth are 100% LIVE.
+# PROJECT HANDOFF & ARCHITECTURE SYNC (V1.4.2)
+**Date:** May 25, 2026
+**System Status:** Container-hardened Network-Agnostic Passive Digital Fence, Trait-Based Notification Hub, and Hardened Google OAuth are 100% LIVE. Unified History & Events API is synchronized.
 
 ## 1. Core Architecture (The Stack)
 *   **Backend:** Rust (Axum, Tokio) — High-concurrency async engine.
@@ -24,24 +24,29 @@
 | **Phase 3: Persistence & Viz** | LIVE | Leveled time-series metrics aging via `compactor.rs` worker thread. |
 | **Phase 4: Digital Fence** | LIVE | Network-Agnostic Passive Digital Fence with Dynamic Subnet Detection tracking mDNS (5353) and SSDP (1900). |
 
-## 4. Shipped Milestones (May 24, 2026)
+## 4. Shipped Milestones (May 25, 2026)
 
-### 1) Passive Digital Fence Sentry Engine
+### 1) Unified History & Events API Sync
+*   **File:** `src/api/history.rs` / `web/src/components/device-details-panel.tsx`
+*   **Feature:** Synchronized backend API with frontend expectations. Implemented `/api/events` (device events), `/api/history` (global scan history), and `/api/devices/:mac/history` (per-device history).
+*   **Benefit:** Enables functional 'Activity' timeline and per-device historical views in the web UI. Fixed camelCase/snake_case inconsistencies between React components.
+
+### 2) Passive Digital Fence Sentry Engine
 *   **File:** `src/scanner/digital_fence.rs`
 *   **Logic:** Continuous background listeners for multicast chatter on ports 5353 (mDNS) and 1900 (SSDP).
 *   **Integration:** Matches ambient IP packets to Layer 2 MAC signatures via `/proc/net/arp` tracing.
 *   **Impact:** Updates `last_seen` timestamps silently without generating active probe traffic.
 
-### 2) Dynamic Subnet Boundary Detection
+### 3) Dynamic Subnet Boundary Detection
 *   **File:** `src/scanner/network.rs` / `src/scanner/mod.rs`
 *   **Feature:** Automatically identifies the local network CIDR using UDP-connect tricks and interface lookups.
 *   **Benefit:** Zero-config deployment on any network; removes all hardcoded `192.168.254.x` references.
 
-### 3) Shared WebSocket Event Model
+### 4) Shared WebSocket Event Model
 *   **Logic:** Digital Fence events (`latency_update` with synthetic 0.1ms flag) are pushed directly to the React D3 Star-Map.
 *   **UI:** Devices "glow" or pulse on the map the moment they broadcast ambient traffic.
 
-### 4) Hardened Google OAuth & Admin Externalization
+### 5) Hardened Google OAuth & Admin Externalization
 *   **Security:** Relaxed CSRF cookie path restrictions (`/api/auth`) and enforced `SameSite::Lax` to prevent landing loop failures during cross-origin redirects.
 *   **Config:** Fully externalized `SHABAKAT_ADMIN_EMAIL` allowlist, removing all hardcoded PII/Email references from the source tree.
 *   **Verification:** Frontend and Backend build chains validated clean.

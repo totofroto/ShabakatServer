@@ -80,7 +80,7 @@ async fn get_latency_score(db: &AppDb) -> Result<i32, String> {
 
 async fn get_security_score(db: &AppDb) -> Result<i32, String> {
     let conn = db.connect().await?;
-    let mut rows = conn.query("SELECT COUNT(*), SUM(CASE WHEN vendor = 'Unknown' OR vendor IS NULL THEN 1 ELSE 0 END) FROM devices WHERE is_active = 1", ()).await.map_err(|e| e.to_string())?;
+    let mut rows = conn.query("SELECT COUNT(*), COALESCE(SUM(CASE WHEN vendor = 'Unknown' OR vendor IS NULL THEN 1 ELSE 0 END), 0) FROM devices WHERE is_active = 1", ()).await.map_err(|e| e.to_string())?;
     
     if let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
         let total: i64 = row.get(0).map_err(|e| e.to_string())?;

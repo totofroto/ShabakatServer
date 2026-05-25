@@ -31,9 +31,16 @@ pub fn router(state: AppState) -> Router {
         "http://localhost:3000",
         "http://localhost:5173",
         "http://localhost:8080",
+        "http://localhost:7779",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8080",
+        "http://192.168.254.18:7779",
+        "http://192.168.254.18.nip.io:7779",
+        "http://192.168.254.18:8080",
+        "http://192.168.254.18.nip.io:8080",
+        "https://192.168.254.18:8080",
+        "https://192.168.254.18.nip.io:8080",
     ];
 
     let mut cors = CorsLayer::new()
@@ -81,6 +88,7 @@ pub fn router(state: AppState) -> Router {
         .route("/devices/:mac", get(devices::get_device))
         .route("/devices/:mac", patch(devices::patch_device))
         .route("/devices/:mac", delete(devices::delete_device))
+        .route("/devices/:mac/history", get(history::get_device_history))
         .route("/devices/:ip/dns", get(adguard::get_device_dns_stats))
         .route("/networks", get(networks::list_networks))
         .route("/network/topology", get(networks::get_topology))
@@ -91,6 +99,7 @@ pub fn router(state: AppState) -> Router {
         .route("/scan", post(scan::trigger_scan))
         .route("/scan/status", get(scan::scan_status))
         .route("/history", get(history::get_history))
+        .route("/events", get(history::get_events))
         .route("/dns/providers", get(providers::list_providers))
         .route("/dns/providers", post(providers::add_provider))
         .route("/dns/providers/:id", patch(providers::patch_provider))

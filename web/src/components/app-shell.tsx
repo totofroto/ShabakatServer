@@ -15,6 +15,7 @@ import {
 } from "@/components/notification-center-drawer";
 import { useLanguage } from "@/context/LanguageContext";
 import { useAuth } from "@/context/AuthContext";
+import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
 const sidebarNavigation: Array<{
@@ -65,7 +66,7 @@ export function AppShell() {
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch("/api/settings");
+      const res = await transport.fetch("/api/settings");
       if (res.ok) {
         setSettings(await res.json());
       }

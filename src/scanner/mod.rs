@@ -19,7 +19,7 @@ pub use fingerprints::classify_from_hostname;
 pub use fingerprints::classify_from_vendor;
 pub use fingerprints::merge_port_and_http_likely;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 use crate::storage::AppDb;
 
 use std::{
@@ -2094,7 +2094,7 @@ fn send_broadcast_nudge(local_network: &network::LocalNetwork) {
 
     let directed_ok = (|| -> bool {
         let Ok(sock) = std::net::UdpSocket::bind(bind_addr) else {
-            info!("[SCAN_TRACE] Broadcast nudge: bind to {} failed", bind_addr);
+            debug!("[SCAN_TRACE] Broadcast nudge: bind to {} failed", bind_addr);
             return false;
         };
         if sock.set_broadcast(true).is_err() {
@@ -2125,16 +2125,16 @@ fn send_broadcast_nudge(local_network: &network::LocalNetwork) {
 
     let limited_dest = SocketAddrV4::new(Ipv4Addr::new(255, 255, 255, 255), 9);
     let Ok(sock2) = std::net::UdpSocket::bind("0.0.0.0:0") else {
-        info!("[SCAN_TRACE] Broadcast nudge: fallback bind(0.0.0.0:0) failed");
+        debug!("[SCAN_TRACE] Broadcast nudge: fallback bind(0.0.0.0:0) failed");
         return;
     };
     if sock2.set_broadcast(true).is_err() {
-        info!("[SCAN_TRACE] Broadcast nudge: fallback set_broadcast failed");
+        debug!("[SCAN_TRACE] Broadcast nudge: fallback set_broadcast failed");
         return;
     }
     match sock2.send_to(payload, limited_dest) {
-        Ok(_) => info!("[SCAN_TRACE] Broadcast nudge → 255.255.255.255 (limited)"),
-        Err(err) => info!("[SCAN_TRACE] Broadcast nudge: limited broadcast failed: {err}"),
+        Ok(_) => debug!("[SCAN_TRACE] Broadcast nudge → 255.255.255.255 (limited)"),
+        Err(err) => debug!("[SCAN_TRACE] Broadcast nudge: limited broadcast failed: {err}"),
     }
 }
 
@@ -2146,11 +2146,11 @@ async fn scan_local_network_inner(
     mode: ScanMode,
     scan_id: String,
 ) -> Result<ScanNetworkResult, String> {
-    info!("[SCAN_TRACE] scan_local_network_inner: entry");
+    debug!("[SCAN_TRACE] scan_local_network_inner: entry");
 
     if let Ok(ifaces) = get_if_addrs::get_if_addrs() {
         for iface in ifaces {
-            info!("[SCAN_DEBUG] Available System Interface: name={}, addr={:?}", iface.name, iface.addr);
+            debug!("[SCAN_DEBUG] Available System Interface: name={}, addr={:?}", iface.name, iface.addr);
         }
     }
 
@@ -2158,7 +2158,7 @@ async fn scan_local_network_inner(
         .await
         .map_err(|join_err| format!("vendor map init panic: {join_err}"))??;
 
-    info!("[SCAN_TRACE] Fetching local IP/Subnet...");
+    debug!("[SCAN_TRACE] Fetching local IP/Subnet...");
 
     const IFACE_RETRY_ATTEMPTS: u32 = 4;
     const IFACE_RETRY_DELAY: Duration = Duration::from_millis(500);
@@ -2328,7 +2328,7 @@ async fn scan_local_network_inner(
                 tokio::spawn(async move {
                     let count = pc.fetch_add(1, Ordering::SeqCst);
                     if count < 3 {
-                        info!("[SCAN_DEBUG] Firing probe at target IP: {}", ip);
+                        debug!("[SCAN_DEBUG] Firing probe at target IP: {}", ip);
                     }
                     probe_host(ip, st, profile).await
                 })
@@ -2375,7 +2375,7 @@ async fn scan_local_network_inner(
 
     loop {
         if scan_cancelled() {
-            info!("[SCAN_TRACE] scan cancelled — returning partial results");
+            debug!("[SCAN_TRACE] scan cancelled — returning partial results");
             if let Some(ref tx) = app {
                 flush_batch!(tx);
             }
@@ -2665,7 +2665,7 @@ async fn scan_local_network_inner(
         let g = state.lock().unwrap();
         build_scan_payload(&g)
     };
-    info!("[SCAN_DEBUG] Discovery phase concluded. Total raw objects found: {}", only_devices.len());
+    debug!("[SCAN_DEBUG] Discovery phase concluded. Total raw objects found: {}", only_devices.len());
 
     if let Some(ref sd) = shared_devices {
         let mut d_lock = sd.lock().unwrap();

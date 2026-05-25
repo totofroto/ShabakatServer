@@ -4,7 +4,7 @@ services:
   shabakat:
     build: .
     network_mode: "host"
-    image: shabakat-server:latest
+    image: shabakat-server:v4
     container_name: shabakat-server
     restart: unless-stopped
 
@@ -21,8 +21,4 @@ services:
 
     volumes:
       # SQLite database persists here across container restarts / upgrades
-      - shabakat-data:/data
-
-volumes:
-  shabakat-data:
-    driver: local
+      - ./data:/data

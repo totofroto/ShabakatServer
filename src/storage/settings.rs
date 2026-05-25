@@ -33,6 +33,7 @@ pub async fn get_all_settings(db: AppDb) -> Result<Value, String> {
     Ok(serde_json::Value::Object(map))
 }
 
+#[allow(dead_code)]
 pub async fn get_setting(db: AppDb, key: &str) -> Result<Option<String>, String> {
     let conn = db.connect().await?;
     let mut rows = conn

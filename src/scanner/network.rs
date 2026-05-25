@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use ipnet::Ipv4Net;
-use log::info;
+use log::debug;
 use tokio::sync::Semaphore;
 
 /// glibc is thread-safe; no need for the tight Android/Bionic limit of 4.
@@ -29,8 +29,8 @@ pub async fn fallback_ipv4_network_via_udp() -> Result<LocalNetwork, String> {
 
         // Use detected local IP with a default /24 prefix
         let prefix = 24;
-        info!(
-            "scan: UDP fallback → {ip} (getifaddrs blocked); using default /24 prefix",
+        debug!(
+            "[SCAN_DEBUG] scan: UDP fallback → {ip} (getifaddrs blocked); using default /24 prefix",
             ip = ip
         );
 

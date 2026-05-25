@@ -15,6 +15,7 @@ export default defineConfig({
     },
   },
   // Dev proxy: forward API and WebSocket calls to the running Axum server
+  // In production, the frontend uses window.location.origin (see src/lib/constants.ts)
   server: {
     proxy: {
       "/api": "http://localhost:7779",

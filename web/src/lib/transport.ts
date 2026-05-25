@@ -70,7 +70,7 @@ function ensureWs(): void {
   if (isTauri()) return;
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
 
-  const wsUrl = API_BASE_URL.replace(/^http/, "ws") + "/ws";
+  const wsUrl = `${API_BASE_URL.replace(/^http/, "ws")}/ws`;
   console.log(`[TRANSPORT] Initializing Shabakat Engine WebSocket Stream connection: ${wsUrl}`);
   const ws = new WebSocket(wsUrl);
   ws.onopen = () => {
@@ -214,7 +214,7 @@ async function browserRequest<T>(
   }
 
   try {
-    const fullUrl = url.startsWith("http") ? url : API_BASE_URL + url;
+    const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
     const res = await fetch(fullUrl, {
       ...init,
       headers,
@@ -494,7 +494,7 @@ export const transport = {
   fetch: (input: RequestInfo | URL, init?: RequestInit) => {
     let finalInput = input;
     if (typeof input === "string" && !input.startsWith("http")) {
-      finalInput = API_BASE_URL + input;
+      finalInput = `${API_BASE_URL}${input}`;
     }
 
     const options: RequestInit = {

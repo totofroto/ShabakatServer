@@ -12,6 +12,8 @@ import { useAuth } from "@/context/AuthContext";
 import { DnsProvider } from "@/types";
 import { Plus, Trash2, ShieldCheck, Power, Palette, Upload, Check, LogIn, ShieldAlert } from "lucide-react";
 import { NotificationHubSettings } from "@/components/notification-hub-settings";
+import { transport } from "@/lib/transport";
+import { API_BASE_URL } from "@/lib/constants";
 
 export function SettingsPage() {
   const { dict } = useLanguage();
@@ -37,7 +39,7 @@ export function SettingsPage() {
 
   const fetchProviders = async () => {
     try {
-      const res = await fetch("/api/dns/providers");
+      const res = await transport.fetch("/api/dns/providers");
       if (res.ok) {
         setProviders(await res.json());
       }
@@ -48,7 +50,7 @@ export function SettingsPage() {
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch("/api/settings");
+      const res = await transport.fetch("/api/settings");
       if (res.ok) {
         setSettings(await res.json());
       }
@@ -59,7 +61,7 @@ export function SettingsPage() {
 
   const updateSetting = async (key: string, value: string) => {
     try {
-      const res = await fetch("/api/settings", {
+      const res = await transport.fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, value }),
@@ -82,7 +84,7 @@ export function SettingsPage() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("/api/assets/upload", {
+      const res = await transport.fetch("/api/assets/upload", {
         method: "POST",
         body: formData,
       });
@@ -103,7 +105,7 @@ export function SettingsPage() {
     if (!newProvider.name || !newProvider.ip) return;
 
     try {
-      const res = await fetch("/api/dns/providers", {
+      const res = await transport.fetch("/api/dns/providers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newProvider),
@@ -119,7 +121,7 @@ export function SettingsPage() {
 
   const toggleProvider = async (id: string, currentStatus: boolean) => {
     try {
-      const res = await fetch(`/api/dns/providers/${id}`, {
+      const res = await transport.fetch(`/api/dns/providers/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isEnabled: !currentStatus }),
@@ -134,7 +136,7 @@ export function SettingsPage() {
 
   const deleteProvider = async (id: string) => {
     try {
-      const res = await fetch(`/api/dns/providers/${id}`, {
+      const res = await transport.fetch(`/api/dns/providers/${id}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -146,14 +148,12 @@ export function SettingsPage() {
   };
 
   const handleHardcodedLogin = () => {
-    // Dynamically derive the API base URL from the current window location
-    const apiBase = window.location.origin;
-    window.location.href = `${apiBase}/api/auth/google/login`;
+    window.location.href = `${API_BASE_URL}/api/auth/google/login`;
   };
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await transport.fetch("/api/auth/logout", { method: "POST" });
       window.location.reload();
     } catch (e) {
       console.error("Logout failed", e);
