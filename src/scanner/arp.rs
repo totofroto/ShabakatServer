@@ -192,3 +192,9 @@ fn normalize_mac_token(token: &str) -> Option<String> {
         octets[0], octets[1], octets[2], octets[3], octets[4], octets[5]
     ))
 }
+
+/// Canonical MAC form: colon-separated, all octets UPPERCASE.
+/// "aa:bb:cc:dd:ee:ff" → "AA:BB:CC:DD:EE:FF"
+pub fn normalize_mac(mac: &str) -> String {
+    mac.to_uppercase()
+}

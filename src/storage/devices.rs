@@ -1,7 +1,8 @@
+use crate::scanner::arp::normalize_mac;
 use crate::scanner::fingerprints::{classify_from_hostname, classify_from_vendor};
 use crate::storage::AppDb;
 use crate::types::{DiscoveredDevice, DeviceRecord};
-use libsql::{params, Connection, Row};
+use rusqlite::{params, Connection, Row};
 
 pub struct DeviceStorage;
 
@@ -18,123 +19,109 @@ pub async fn complete_scan_persistence(
     network_id: Option<i64>,
 ) -> Result<Vec<(String, String, String, String)>, String> {
     let now = super::now_ms();
-    let conn = db.connect_dedicated()?;
 
-    // Set busy_timeout on this dedicated connection so WAL write conflicts
-    // wait up to 5 s instead of failing immediately with SQLITE_BUSY.
-    if let Err(e) = conn.execute("PRAGMA busy_timeout = 5000", ()).await {
-        log::warn!("[DB] busy_timeout pragma failed on dedicated conn (non-fatal): {e}");
-    }
+    db.execute(move |conn| {
+        if let Err(e) = conn.execute("PRAGMA busy_timeout = 5000", []) {
+            log::warn!("[DB] busy_timeout pragma failed (non-fatal): {e}");
+        }
 
-    conn.execute("BEGIN", ()).await.map_err(|e| {
-        log::error!("[DB] [FLIGHT_RECORDER] BEGIN transaction failed: {e}");
-        e.to_string()
-    })?;
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            log::error!("[DB] [FLIGHT_RECORDER] Transaction start failed: {e}");
+            e.to_string()
+        })?;
 
-    let mut new_devices = Vec::new();
+        let mut new_devices = Vec::new();
 
-    for dev in &devices {
-        match upsert_discovered_device(&conn, dev, now, network_id).await {
-            Ok((device_id, is_new)) => {
-                if let Err(e) = super::history::record_device_online(
-                    &conn,
-                    &scan_id,
-                    now,
-                    device_id,
-                    &dev.ip,
-                    dev.latency_ms,
-                    network_id,
-                ).await {
-                    log::error!(
-                        "[DB] [FLIGHT_RECORDER] record_device_online failed for IP {} (device_id={device_id}): {e}",
-                        dev.ip
-                    );
-                    let _ = conn.execute("ROLLBACK", ()).await;
-                    return Err(format!("history record failed: {e}"));
-                }
-
-                if is_new {
-                    if let Err(e) = super::history::record_new_device_event(
-                        &conn,
-                        device_id,
-                        &dev.ip,
-                        &dev.mac,
-                        if dev.vendor.is_empty() { None } else { Some(&dev.vendor) },
-                        now,
-                    ).await {
+        for dev in &devices {
+            match upsert_discovered_device(&tx, dev, now, network_id) {
+                Ok((device_id, is_new, is_ignored)) => {
+                    if let Err(e) = super::history::record_device_online(
+                        &tx,
+                        super::history::OnlineRecord {
+                            scan_id: &scan_id,
+                            scanned_at: now,
+                            device_id,
+                            ip: &dev.ip,
+                            latency_ms: dev.latency_ms,
+                            network_id,
+                            rssi: dev.rssi,
+                        },
+                    ) {
                         log::error!(
-                            "[DB] [FLIGHT_RECORDER] record_new_device_event failed for MAC {} IP {}: {e}",
-                            dev.mac, dev.ip
+                            "[DB] [FLIGHT_RECORDER] record_device_online failed for IP {} (device_id={device_id}): {e}",
+                            dev.ip
                         );
-                        let _ = conn.execute("ROLLBACK", ()).await;
-                        return Err(format!("event record failed: {e}"));
+                        return Err(format!("history record failed: {e}"));
                     }
 
-                    new_devices.push((
-                        dev.name.clone(),
-                        dev.vendor.clone(),
-                        dev.ip.clone(),
-                        dev.mac.clone(),
-                    ));
+                    if is_new && !is_ignored {
+                        if let Err(e) = super::history::record_new_device_event(
+                            &tx,
+                            device_id,
+                            &dev.ip,
+                            &dev.mac,
+                            if dev.vendor.is_empty() { None } else { Some(&dev.vendor) },
+                            now,
+                        ) {
+                            log::error!(
+                                "[DB] [FLIGHT_RECORDER] record_new_device_event failed for MAC {}: {e}",
+                                dev.mac
+                            );
+                        }
+                        
+                        // Use display_name if available, otherwise fallback to whatever we have
+                        let name = dev.hostname.clone()
+                            .or(dev.mdns_hostname.clone())
+                            .or(dev.ssdp_server.clone())
+                            .unwrap_or_else(|| dev.ip.clone());
+
+                        new_devices.push((name, dev.vendor.clone(), dev.ip.clone(), dev.mac.clone()));
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "[DB] [FLIGHT_RECORDER] upsert_discovered_device failed for MAC {}: {e}",
+                        dev.mac
+                    );
+                    return Err(format!("upsert failed: {e}"));
                 }
             }
-            Err(e) => {
-                log::error!(
-                    "[DB] [FLIGHT_RECORDER] upsert_discovered_device failed for MAC {} IP {}: {e}",
-                    dev.mac, dev.ip
-                );
-                let _ = conn.execute("ROLLBACK", ()).await;
-                return Err(format!("device upsert failed: {e}"));
-            }
         }
-    }
 
-    let seen_macs: Vec<String> = devices.iter().map(|d| d.mac.clone()).collect();
-    if let Err(e) = mark_offline_except(&conn, &seen_macs).await {
-        log::error!("[DB] [FLIGHT_RECORDER] mark_offline_except failed (seen_macs={}): {e}", seen_macs.len());
-        let _ = conn.execute("ROLLBACK", ()).await;
-        return Err(format!("mark offline failed: {e}"));
-    }
-
-    conn.execute("COMMIT", ()).await.map_err(|e| {
-        log::error!("[DB] [FLIGHT_RECORDER] COMMIT failed: {e}");
-        e.to_string()
-    })?;
-
-    Ok(new_devices)
+        tx.commit().map_err(|e| {
+            log::error!("[DB] [FLIGHT_RECORDER] Transaction commit failed: {e}");
+            e.to_string()
+        })?;
+        Ok(new_devices)
+    })
+    .await
 }
 
-/// List all devices asynchronously, optionally filtering for online only.
 pub async fn list_devices_async(db: AppDb, online_only: bool) -> Result<Vec<DeviceRecord>, String> {
-    let conn = db.connect_dedicated()?;
-    list_devices(&conn, online_only).await
+    db.execute(move |conn| list_devices(conn, online_only)).await
 }
 
-/// Get a device by its MAC address asynchronously.
 pub async fn get_device_by_mac_async(db: AppDb, mac: String) -> Result<Option<DeviceRecord>, String> {
-    let conn = db.connect_dedicated()?;
-    get_device_by_mac(&conn, &mac).await
+    db.execute(move |conn| get_device_by_mac(conn, &mac)).await
 }
 
-/// Upsert a device alias asynchronously.
 pub async fn upsert_device_alias(
     db: AppDb,
     ip_address: String,
     alias_name: String,
 ) -> Result<(), String> {
-    let conn = db.connect_dedicated()?;
-    conn.execute(
-        "INSERT INTO device_aliases (ip_address, alias_name) 
-         VALUES (?1, ?2) 
-         ON CONFLICT(ip_address) DO UPDATE SET alias_name = excluded.alias_name",
-        params![ip_address, alias_name],
-    )
-    .await
-    .map_err(|e| format!("upsert device alias: {e}"))?;
-    Ok(())
+    db.execute(move |conn| -> Result<(), String> {
+        conn.execute(
+            "INSERT INTO device_aliases (ip_address, alias_name) 
+             VALUES (?1, ?2) 
+             ON CONFLICT(ip_address) DO UPDATE SET alias_name = excluded.alias_name",
+            params![ip_address, alias_name],
+        )
+        .map_err(|e| format!("upsert device alias: {e}"))?;
+        Ok(())
+    }).await
 }
 
-/// Update custom fields for a device asynchronously.
 pub async fn update_device_custom_fields(
     db: AppDb,
     mac: String,
@@ -143,56 +130,159 @@ pub async fn update_device_custom_fields(
     acknowledged: Option<bool>,
     custom_icon: Option<String>,
 ) -> Result<(), String> {
-    let conn = db.connect_dedicated()?;
-    conn.execute(
-        "UPDATE devices SET 
-            custom_name = COALESCE(?2, custom_name), 
-            notes = COALESCE(?3, notes), 
-            acknowledged = COALESCE(?4, acknowledged),
-            custom_icon = COALESCE(?5, custom_icon)
-         WHERE mac = ?1",
-        params![
-            mac,
-            custom_name,
-            notes,
-            acknowledged.map(|b| b as i64),
-            custom_icon,
-        ],
-    )
-    .await
-    .map_err(|e| format!("update device custom fields: {e}"))?;
-    Ok(())
+    db.execute(move |conn| {
+        patch_device(conn, &mac, custom_name, notes, acknowledged, custom_icon).map(|_| ())
+    }).await
 }
 
-/// Upsert a discovered device. Returns `(device_id, is_new)`.
-pub async fn upsert_discovered_device(
+pub async fn ignore_device_async(db: AppDb, mac: String) -> Result<(), String> {
+    db.execute(move |conn| -> Result<(), String> {
+        conn.execute(
+            "UPDATE devices SET is_ignored = 1 WHERE mac = ?1",
+            params![mac],
+        ).map_err(|e| format!("ignore device: {e}"))?;
+        Ok(())
+    }).await
+}
+
+pub fn list_devices(conn: &Connection, online_only: bool) -> Result<Vec<DeviceRecord>, String> {
+    backfill_likely_type(conn);
+    let sql = if online_only {
+        "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
+                d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
+                d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.is_ignored, d.rssi, d.custom_icon
+         FROM devices d
+         LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
+         WHERE (strftime('%s','now') * 1000 - d.last_seen) < 900000 
+         ORDER BY d.last_seen DESC"
+    } else {
+        "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
+                d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
+                d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.is_ignored, d.rssi, d.custom_icon
+         FROM devices d
+         LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
+         ORDER BY d.last_seen DESC"
+    };
+    
+    let mut stmt = conn.prepare(sql).map_err(|e| format!("prepare list devices: {e}"))?;
+    let rows = stmt
+        .query_map([], row_to_device)
+        .map_err(|e| format!("query list devices: {e}"))?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row.map_err(|e| format!("map list devices: {e}"))?);
+    }
+    Ok(results)
+}
+
+pub fn get_device_by_mac(conn: &Connection, mac: &str) -> Result<Option<DeviceRecord>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
+                d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
+                d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.is_ignored, d.rssi, d.custom_icon
+         FROM devices d
+         LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
+         WHERE d.mac = ?1",
+    ).map_err(|e| format!("prepare get device: {e}"))?;
+
+    let mut rows = stmt
+        .query_map(params![mac], row_to_device)
+        .map_err(|e| format!("query get device: {e}"))?;
+
+    if let Some(row) = rows.next() {
+        return Ok(Some(row.map_err(|e| format!("map get device: {e}"))?));
+    }
+    Ok(None)
+}
+
+pub fn patch_device(
+    conn: &Connection,
+    mac: &str,
+    custom_name: Option<String>,
+    notes: Option<String>,
+    acknowledged: Option<bool>,
+    custom_icon: Option<String>,
+) -> Result<bool, String> {
+    let mut updates = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(name) = custom_name {
+        updates.push("custom_name = ?");
+        params.push(Box::new(nonempty(&name).map(|s| s.to_string())));
+    }
+    if let Some(n) = notes {
+        updates.push("notes = ?");
+        params.push(Box::new(nonempty(&n).map(|s| s.to_string())));
+    }
+    if let Some(ack) = acknowledged {
+        updates.push("acknowledged = ?");
+        params.push(Box::new(if ack { 1 } else { 0 }));
+    }
+    if let Some(icon) = custom_icon {
+        updates.push("custom_icon = ?");
+        params.push(Box::new(nonempty(&icon).map(|s| s.to_string())));
+    }
+
+    if updates.is_empty() {
+        return Ok(true);
+    }
+
+    let sql = format!(
+        "UPDATE devices SET {} WHERE mac = ?",
+        updates.join(", ")
+    );
+    
+    // Add mac as the last parameter
+    params.push(Box::new(mac.to_string()));
+
+    // Convert Box<dyn ToSql> to &dyn ToSql
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    let rows = conn.execute(&sql, &params_refs[..])
+        .map_err(|e| format!("update device: {e}"))?;
+    
+    Ok(rows > 0)
+}
+
+pub fn delete_device(conn: &Connection, mac: &str) -> Result<bool, String> {
+    let rows = conn.execute("DELETE FROM devices WHERE mac = ?1", params![mac])
+        .map_err(|e| format!("delete device: {e}"))?;
+    Ok(rows > 0)
+}
+
+fn upsert_discovered_device(
     conn: &Connection,
     dev: &DiscoveredDevice,
     now_ms: i64,
     network_id: Option<i64>,
-) -> Result<(i64, bool), String> {
-    // --- Samsung Fallback Shortcut ---
-    // Force identification for the user's specific Z Fold 7 to bypass async port drop inconsistencies.
-    let (mut display_name, mut likely_type, mut vendor) = (
-        nonempty(&dev.name).map(|s| s.to_string()),
-        dev.likely_type.clone(),
-        nonempty(&dev.vendor).map(|s| s.to_string()),
-    );
+) -> Result<(i64, bool, bool), String> {
+    let vendor = nonempty(&dev.vendor_name).or(nonempty(&dev.vendor));
+    
+    // Fix: classify_from_vendor takes 3 arguments.
+    let current_label = ""; 
+    let open_ports: Vec<u16> = dev.open_ports.as_deref()
+        .map(|s| s.split(',').filter_map(|p| p.parse().ok()).collect())
+        .unwrap_or_default();
 
-    if dev.ip == "192.168.254.4" {
-        display_name = Some("Samsung Galaxy Z Fold 7 (SM-F966B)".to_string());
-        likely_type = Some("Smartphone".to_string());
-        vendor = Some("Samsung Electronics".to_string());
-    }
+    let likely_type = dev.likely_type.as_deref()
+        .map(|s| s.to_string())
+        .or_else(|| classify_from_hostname(dev.hostname.as_deref().unwrap_or_default()).map(|s| s.to_string()))
+        .or_else(|| classify_from_vendor(vendor.unwrap_or_default(), &open_ports, current_label).map(|s| s.to_string()));
+
+    let display_name = dev.hostname.as_deref()
+        .or(dev.mdns_hostname.as_deref())
+        .or(dev.ssdp_server.as_deref())
+        .or(nonempty(&dev.name));
 
     // Use ON CONFLICT (mac) DO UPDATE for a single-pass upsert
     let sql = "
         INSERT INTO devices (
             mac, first_seen, last_seen, last_ip, vendor, 
             likely_type, hostname, mdns_hostname, ssdp_server, 
-            display_name, network_id, is_online, is_active
+            display_name, network_id, is_online, is_active, rssi
         )
-        VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, 1)
+        VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, 1, ?11)
         ON CONFLICT(mac) DO UPDATE SET
             last_seen     = excluded.last_seen,
             last_ip       = excluded.last_ip,
@@ -203,11 +293,12 @@ pub async fn upsert_discovered_device(
             ssdp_server   = COALESCE(excluded.ssdp_server, devices.ssdp_server),
             network_id    = COALESCE(excluded.network_id, devices.network_id),
             is_online     = 1,
-            is_active     = 1
+            is_active     = 1,
+            rssi          = excluded.rssi
     ";
 
     let res = conn.execute(sql, params![
-        dev.mac.clone(),
+        normalize_mac(&dev.mac),
         now_ms,
         dev.ip.clone(),
         vendor,
@@ -217,185 +308,51 @@ pub async fn upsert_discovered_device(
         dev.ssdp_server.as_deref(),
         display_name,
         network_id,
-    ]).await;
+        dev.rssi,
+    ]);
 
     match res {
         Ok(rows_affected) => {
             let is_new = rows_affected == 1;
-            let mut rows = conn
-                .query(
-                    "SELECT id FROM devices WHERE mac = ?1",
-                    params![dev.mac.clone()],
-                )
-                .await
-                .map_err(|e| format!("device id lookup: {e}"))?;
-
-            if let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
-                let id: i64 = row.get::<Option<i64>>(0).map_err(|e| e.to_string())?.unwrap_or_default();
-                Ok((id, is_new))
-            } else {
-                Err("device id not found after upsert".to_string())
-            }
+            let row: (i64, i64) = conn.query_row(
+                "SELECT id, is_ignored FROM devices WHERE mac = ?1",
+                params![dev.mac],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).map_err(|e| format!("fetch upserted id: {e}"))?;
+            Ok((row.0, is_new, row.1 != 0))
         }
-        Err(e) => {
-            log::error!("[DB] Upsert failed for MAC {}: {}", dev.mac, e);
-            Err(format!("device upsert error: {e}"))
-        }
+        Err(e) => Err(format!("upsert device: {e}")),
     }
 }
 
-pub async fn mark_offline_except(conn: &Connection, seen_macs: &[String]) -> Result<usize, String> {
-    let n = if seen_macs.is_empty() {
-        conn.execute("UPDATE devices SET is_online = 0 WHERE is_online = 1", ())
-            .await
-            .map_err(|e| format!("mark_offline_all: {e}"))?
-    } else {
-        let placeholders = seen_macs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "UPDATE devices SET is_online = 0 WHERE is_online = 1 AND mac NOT IN ({placeholders})"
-        );
-        // libsql::params_from_iter equivalent
-        let mut params_vec = Vec::new();
-        for mac in seen_macs {
-            params_vec.push(libsql::Value::from(mac.clone()));
-        }
-        conn.execute(&sql, params_vec)
-            .await
-            .map_err(|e| format!("mark_offline_except: {e}"))?
-    };
-    Ok(n as usize)
+fn backfill_likely_type(conn: &Connection) {
+    let _ = conn.execute(
+        "UPDATE devices SET likely_type = 'Router' WHERE likely_type IS NULL AND (hostname LIKE '%router%' OR hostname LIKE '%gateway%')",
+        [],
+    );
 }
 
-async fn backfill_likely_type(conn: &Connection) {
-    const GENERIC: &[&str] = &["", "Network Device", "Router / Gateway"];
-
-    let mut rows = match conn.query(
-        "SELECT mac, vendor, hostname, mdns_hostname
-         FROM devices
-         WHERE likely_type IS NULL
-            OR likely_type = ''
-            OR likely_type = 'Network Device'
-            OR likely_type = 'Router / Gateway'",
-        (),
-    ).await {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    let mut candidates = Vec::new();
-    while let Ok(Some(row)) = rows.next().await {
-        candidates.push((
-            row.get::<Option<String>>(0).unwrap_or_default().unwrap_or_default(),
-            row.get::<Option<String>>(1).unwrap_or_default(),
-            row.get::<Option<String>>(2).unwrap_or_default(),
-            row.get::<Option<String>>(3).unwrap_or_default(),
-        ));
-    }
-
-    for (mac, vendor, hostname, mdns_hostname) in candidates {
-        let new_type = [mdns_hostname.as_deref(), hostname.as_deref()]
-            .into_iter()
-            .flatten()
-            .find_map(classify_from_hostname)
-            .or_else(|| {
-                vendor
-                    .as_deref()
-                    .and_then(|v| classify_from_vendor(v, &[], ""))
-            });
-
-        if let Some(t) = new_type {
-            if GENERIC.contains(&t.as_str()) {
-                continue;
-            }
-            let _ = conn.execute(
-                "UPDATE devices SET likely_type = ?1
-                  WHERE mac = ?2
-                    AND (likely_type IS NULL
-                         OR likely_type = ''
-                         OR likely_type = 'Network Device'
-                         OR likely_type = 'Router / Gateway')",
-                params![t, mac],
-            ).await;
-        }
-    }
-}
-
-pub async fn list_devices(conn: &Connection, online_only: bool) -> Result<Vec<DeviceRecord>, String> {
-    backfill_likely_type(conn).await;
-    let sql = if online_only {
-        "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
-                d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
-                d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.custom_icon
-         FROM devices d
-         LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
-         WHERE d.is_online = 1 ORDER BY d.last_seen DESC"
-    } else {
-        "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
-                d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
-                d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.custom_icon
-         FROM devices d
-         LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
-         ORDER BY d.last_seen DESC"
-    };
-    
-    let mut rows = conn
-        .query(sql, ())
-        .await
-        .map_err(|e| format!("query list: {e}"))?;
-
-    let mut results = Vec::new();
-    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
-        results.push(row_to_device(&row).map_err(|e| e.to_string())?);
-    }
-
-    Ok(results)
-}
-
-pub async fn get_device_by_mac(conn: &Connection, mac: &str) -> Result<Option<DeviceRecord>, String> {
-    let mut rows = conn.query(
-        "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
-                d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
-                d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.custom_icon
-         FROM devices d
-         LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
-         WHERE d.mac = ?1",
-        params![mac],
-    ).await.map_err(|e| format!("get device: {e}"))?;
-
-    if let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
-        Ok(Some(row_to_device(&row).map_err(|e| e.to_string())?))
-    } else {
-        Ok(None)
-    }
-}
-
-pub async fn delete_device(conn: &Connection, mac: &str) -> Result<bool, String> {
-    let changed = conn
-        .execute("DELETE FROM devices WHERE mac = ?1", params![mac])
-        .await
-        .map_err(|e| format!("delete device: {e}"))?;
-    Ok(changed == 1)
-}
-
-fn row_to_device(row: &Row) -> Result<DeviceRecord, libsql::Error> {
+fn row_to_device(row: &Row) -> rusqlite::Result<DeviceRecord> {
     Ok(DeviceRecord {
-        id:                 row.get::<Option<i64>>(0)?.unwrap_or_default(),
-        mac:                row.get::<Option<String>>(1)?.unwrap_or_default(),
-        first_seen:         row.get::<Option<i64>>(2)?.unwrap_or_default(),
-        last_seen:          row.get::<Option<i64>>(3)?.unwrap_or_default(),
-        last_ip:            row.get::<Option<String>>(4)?,
-        vendor:             row.get::<Option<String>>(5)?,
-        custom_name:        row.get::<Option<String>>(6)?,
-        likely_type:        row.get::<Option<String>>(7)?,
-        hostname:           row.get::<Option<String>>(8)?,
-        mdns_hostname:      row.get::<Option<String>>(9)?,
-        ssdp_server:        row.get::<Option<String>>(10)?,
-        interrogation_name: row.get::<Option<String>>(11)?,
-        acknowledged:       row.get::<Option<i64>>(12)?.unwrap_or_default() != 0,
-        notes:              row.get::<Option<String>>(13)?,
-        display_name:       row.get::<Option<String>>(14)?,
-        is_online:          row.get::<Option<i64>>(15)?.unwrap_or_default() != 0,
-        custom_icon:        row.get::<Option<String>>(16)?,
+        id:                 row.get(0)?,
+        mac:                row.get(1)?,
+        first_seen:         row.get::<_, Option<i64>>(2)?.unwrap_or_default(),
+        last_seen:          row.get::<_, Option<i64>>(3)?.unwrap_or_default(),
+        last_ip:            row.get(4)?,
+        vendor:             row.get(5)?,
+        custom_name:        row.get(6)?,
+        likely_type:        row.get(7)?,
+        hostname:           row.get(8)?,
+        mdns_hostname:      row.get(9)?,
+        ssdp_server:        row.get(10)?,
+        interrogation_name: row.get(11)?,
+        acknowledged:       row.get::<_, Option<i64>>(12)?.unwrap_or_default() != 0,
+        notes:              row.get(13)?,
+        display_name:       row.get(14)?,
+        is_online:          row.get::<_, Option<i64>>(15)?.unwrap_or_default() != 0,
+        is_ignored:         row.get::<_, Option<i64>>(16)?.unwrap_or_default() != 0,
+        rssi:               row.get::<_, Option<i32>>(17)?,
+        custom_icon:        row.get::<_, Option<String>>(18)?,
         suggested_names:    None,
     })
 }

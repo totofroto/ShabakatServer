@@ -8,6 +8,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
 use log::{info, error};
 use ipnet::Ipv4Net;
+use rusqlite::OptionalExtension;
 
 #[derive(Debug, Clone)]
 pub struct AmbientEvent {
@@ -69,26 +70,15 @@ impl DigitalFence {
         // Bind to INADDR_ANY over Host Network mode to capture global multicast frames
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
         
-        // Use socket2 for more control like SO_REUSEADDR and SO_REUSEPORT
-        let socket = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::DGRAM,
-            Some(socket2::Protocol::UDP),
-        )?;
-
-        socket.set_reuse_address(true)?;
-        #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
-        socket.set_reuse_port(true)?;
+        let std_socket = std::net::UdpSocket::bind(addr)?;
+        std_socket.set_nonblocking(true)?;
+        let socket = UdpSocket::from_std(std_socket)?;
         
-        socket.bind(&addr.into())?;
-        
-        let socket = UdpSocket::from_std(socket.into())?;
-        
-        let mut buffer = [0u8; 1024];
+        let mut buf = [0u8; 1024];
         info!("[FLIGHT_RECORDER] Digital Fence tracking ambient {} chatter on port {}.", protocol, port);
 
         loop {
-            let (bytes_read, peer_addr) = match socket.recv_from(&mut buffer).await {
+            let (bytes_read, peer_addr) = match socket.recv_from(&mut buf).await {
                 Ok(res) => res,
                 Err(_) => continue,
             };
@@ -128,7 +118,7 @@ impl DigitalFence {
                 let mac = parts[3];
 
                 if ip == target_ip && mac != "00:00:00:00:00:00" {
-                    return Some(mac.to_string().to_lowercase());
+                    return Some(super::arp::normalize_mac(mac));
                 }
             }
         }
@@ -137,40 +127,39 @@ impl DigitalFence {
 
     async fn process_ambient_match(event: AmbientEvent, db: &AppDb, broadcast_tx: &broadcast::Sender<serde_json::Value>) {
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let conn = db.conn.lock().await;
+        let mac_address = event.mac_address.clone();
+        let ip_address = event.ip_address.clone();
+        let _protocol = event.protocol;
 
-        // Check if this physical layer signature already exists in your table
-        let device_exists: bool = {
-            let mut stmt = match conn.prepare("SELECT COUNT(*) FROM devices WHERE mac = ?1").await {
-                Ok(s) => s,
-                Err(_) => return,
+
+        let res = db.execute(move |conn| {
+            // Check if this physical layer signature already exists in your table
+            let device_info: Option<(bool, bool)> = {
+                let mut stmt = conn.prepare("SELECT 1, is_ignored FROM devices WHERE mac = ?1").map_err(|e| e.to_string())?;
+                stmt.query_row(rusqlite::params![mac_address], |row| Ok((true, row.get::<_, i64>(1)? != 0))).optional().map_err(|e| e.to_string())?
             };
-            let mut rows = match stmt.query(libsql::params![event.mac_address.clone()]).await {
-                Ok(r) => r,
-                Err(_) => return,
+
+            let (device_exists, is_ignored) = match device_info {
+                Some((exists, ignored)) => (exists, ignored),
+                None => (false, false),
             };
-            match rows.next().await {
-                Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
-                _ => false,
-            }
-        };
 
-        // Atomic Database Sync: Update presence footprints silently. 
-        // We use INSERT ON CONFLICT to ensure even unrecognized devices are registered.
-        let update_res = conn.execute(
-            "INSERT INTO devices (mac, first_seen, last_seen, last_ip, likely_type) 
-             VALUES (?1, ?2, ?2, ?3, 'Digital Fence Discovery')
-             ON CONFLICT(mac) DO UPDATE SET last_seen = ?2, last_ip = ?3",
-            libsql::params![event.mac_address.clone(), now_ms, event.ip_address.clone()],
-        ).await;
+            // Atomic Database Sync: Update presence footprints silently. 
+            // We use INSERT ON CONFLICT to ensure even unrecognized devices are registered.
+            let affected_rows = conn.execute(
+                "INSERT INTO devices (mac, first_seen, last_seen, last_ip, likely_type) 
+                 VALUES (?1, ?2, ?2, ?3, 'Digital Fence Discovery')
+                 ON CONFLICT(mac) DO UPDATE SET last_seen = ?2, last_ip = ?3",
+                rusqlite::params![mac_address, now_ms, ip_address],
+            ).map_err(|e| e.to_string())?;
 
-        // Release DB lock early to prevent out-of-band blocking threats
-        drop(conn);
+            Ok::<_, String>((device_exists, is_ignored, affected_rows))
+        }).await;
 
-        if let Ok(affected_rows) = update_res {
+        if let Ok((device_exists, is_ignored, affected_rows)) = res {
             if affected_rows > 0 {
                 // 🌟 Hub Execution Vector: Target is an intruder/unrecognized newcomer on the fence loop!
-                if !device_exists {
+                if !device_exists && !is_ignored {
                     log::warn!("[FLIGHT_RECORDER] Perimeter Breach! Processing multi-channel intruder alerts for MAC: {}", event.mac_address);
 
                     // 1. Log the breach into the historical event registry
@@ -221,4 +210,5 @@ impl DigitalFence {
             }
         }
     }
+
 }
