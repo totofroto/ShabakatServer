@@ -158,9 +158,9 @@ impl DigitalFence {
             // Atomic Database Sync: Update presence footprints silently. 
             // We use INSERT ON CONFLICT to ensure even unrecognized devices are registered.
             let affected_rows = conn.execute(
-                "INSERT INTO devices (mac, first_seen, last_seen, last_ip, likely_type) 
-                 VALUES (?1, ?2, ?2, ?3, 'Digital Fence Discovery')
-                 ON CONFLICT(mac) DO UPDATE SET last_seen = ?2, last_ip = ?3",
+                "INSERT INTO devices (mac, first_seen, last_seen, last_ip, likely_type, is_online, is_active) 
+                 VALUES (?1, ?2, ?2, ?3, 'Digital Fence Discovery', 1, 1)
+                 ON CONFLICT(mac) DO UPDATE SET last_seen = ?2, last_ip = ?3, is_online = 1, is_active = 1",
                 rusqlite::params![mac_for_db, now_ms, ip_address],
             ).map_err(|e| e.to_string())?;
 

@@ -79,7 +79,8 @@ const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// v2 — extended schema: outages, speed_tests, dns_providers, device_aliases,
 ///       system_status, notification_providers, hourly_metrics + ALTER TABLE
 ///       column additions via `migrations::run`.
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+/// v3 — add is_active column to devices table
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 // ---------------------------------------------------------------------------
 // Public type alias + utility function used by every sub-module
@@ -535,6 +536,27 @@ fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
             })?;
 
         info!("[FLIGHT_RECORDER] Migration v2 applied and stamped successfully");
+    }
+
+    // ── v2 → v3: Add is_active column to devices table ───────────────────────
+    if stored_version < 3 {
+        info!("[FLIGHT_RECORDER] Applying migration v2 → v3 (add devices.is_active)");
+        let _ = conn.execute(
+            "ALTER TABLE devices ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
+        conn.pragma_update(None, "user_version", 3_i64)
+            .map_err(|e| {
+                error!(
+                    "[FLIGHT_RECORDER] Failed to stamp schema version 3: {}",
+                    e
+                );
+                StorageError::MigrationFailed {
+                    version: 3,
+                    source: e,
+                }
+            })?;
+        info!("[FLIGHT_RECORDER] Migration v3 applied and stamped successfully");
     }
 
     // ── Future migrations ────────────────────────────────────────────────────

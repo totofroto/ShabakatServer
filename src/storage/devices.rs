@@ -156,7 +156,7 @@ pub fn list_devices(conn: &Connection, online_only: bool) -> Result<Vec<DeviceRe
                 d.acknowledged, d.notes, COALESCE(a.alias_name, d.display_name), d.is_online, d.is_ignored, d.rssi, d.custom_icon
          FROM devices d
          LEFT JOIN device_aliases a ON d.last_ip = a.ip_address
-         WHERE (strftime('%s','now') * 1000 - d.last_seen) < 900000 
+         WHERE d.is_online = 1 
          ORDER BY d.last_seen DESC"
     } else {
         "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
@@ -281,6 +281,13 @@ fn upsert_discovered_device(
         .or(dev.ssdp_server.as_deref())
         .or(nonempty(&dev.name));
 
+    let normalized_mac = normalize_mac(&dev.mac);
+    let mut stmt = conn.prepare("SELECT 1 FROM devices WHERE mac = ?1")
+        .map_err(|e| format!("prepare check exist: {e}"))?;
+    let exists = stmt.exists(params![&normalized_mac])
+        .map_err(|e| format!("check exist: {e}"))?;
+    let is_new = !exists;
+
     // Use ON CONFLICT (mac) DO UPDATE for a single-pass upsert
     let sql = "
         INSERT INTO devices (
@@ -304,7 +311,7 @@ fn upsert_discovered_device(
     ";
 
     let res = conn.execute(sql, params![
-        normalize_mac(&dev.mac),
+        normalized_mac,
         now_ms,
         dev.ip.clone(),
         vendor,
@@ -318,8 +325,7 @@ fn upsert_discovered_device(
     ]);
 
     match res {
-        Ok(rows_affected) => {
-            let is_new = rows_affected == 1;
+        Ok(_) => {
             let row: (i64, i64) = conn.query_row(
                 "SELECT id, is_ignored FROM devices WHERE mac = ?1",
                 params![normalize_mac(&dev.mac)],

@@ -126,11 +126,7 @@ pub struct DeviceRecord {
 
 impl DeviceRecord {
     pub fn is_online(&self) -> bool {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-        (now - self.last_seen) < 900000 // 15 minutes in ms
+        self.is_online
     }
 
     pub fn generate_suggested_names(&mut self) {

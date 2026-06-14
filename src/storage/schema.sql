@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS devices (
     -- User-space annotations
     custom_name         TEXT,           -- User-assigned display label
     acknowledged        INTEGER NOT NULL DEFAULT 0, -- 1 = user has marked as known
-    notes               TEXT            -- Free-form markdown annotation
+    notes               TEXT,           -- Free-form markdown annotation
+    is_active           INTEGER NOT NULL DEFAULT 1
 
     -- CHECK constraint ensures the acknowledged flag stays boolean
     , CHECK (acknowledged IN (0, 1))
