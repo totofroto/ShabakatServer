@@ -4,8 +4,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
+use crate::api::error::{ApiError, ApiResult};
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -28,27 +28,17 @@ pub struct DeviceDnsStats {
 pub async fn get_device_dns_stats(
     State(state): State<AppState>,
     Path(ip): Path<String>,
-) -> impl IntoResponse {
-    let providers = match crate::storage::providers::get_active_providers(state.db.clone()).await {
-        Ok(p) => p,
-        Err(e) => {
-            log::error!("[ADGUARD] Failed to fetch DNS providers: {}", e);
-            return Json(DeviceDnsStats {
-                ip,
-                total_queries: 0,
-                blocked_queries: 0,
-            })
-            .into_response();
-        }
-    };
+) -> ApiResult<impl IntoResponse> {
+    let providers = crate::storage::providers::get_active_providers(state.db.clone())
+        .await
+        .map_err(ApiError::from)?;
 
     if providers.is_empty() {
-        return Json(DeviceDnsStats {
+        return Ok(Json(DeviceDnsStats {
             ip,
             total_queries: 0,
             blocked_queries: 0,
-        })
-        .into_response();
+        }));
     }
 
     // For now, use the first active provider.
@@ -63,7 +53,7 @@ pub async fn get_device_dns_stats(
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+        .map_err(|e| ApiError::Internal(format!("Failed to build client: {}", e)))?;
 
     let mut request = client.get(&url);
 
@@ -73,53 +63,23 @@ pub async fn get_device_dns_stats(
         }
     }
 
-    let resp = match request.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!(
-                "[FLIGHT_RECORDER] AdGuard lookup failed for IP {}: {}",
-                ip,
-                e
-            );
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to reach AdGuard: {}", e) })),
-            )
-                .into_response();
-        }
-    };
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to reach AdGuard: {}", e)))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
-        log::warn!(
-            "[FLIGHT_RECORDER] AdGuard returned error status for IP {}: {}",
-            ip,
+        return Err(ApiError::Internal(format!(
+            "AdGuard returned error: {}",
             status
-        );
-        return (
-            axum::http::StatusCode::from_u16(status.as_u16())
-                .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
-            Json(json!({ "error": format!("AdGuard returned error: {}", status) })),
-        )
-            .into_response();
+        )));
     }
 
-    let query_log: AdGuardQueryLog = match resp.json().await {
-        Ok(log) => log,
-        Err(e) => {
-            log::warn!(
-                "[FLIGHT_RECORDER] AdGuard parsing failed for IP {}: {}. Returning default stats.",
-                ip,
-                e
-            );
-            return Json(DeviceDnsStats {
-                ip,
-                total_queries: 0,
-                blocked_queries: 0,
-            })
-            .into_response();
-        }
-    };
+    let query_log: AdGuardQueryLog = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to parse AdGuard response: {}", e)))?;
 
     let total_queries = query_log.data.len();
     let blocked_queries = query_log
@@ -128,12 +88,11 @@ pub async fn get_device_dns_stats(
         .filter(|entry| is_blocked_reason(&entry.reason))
         .count();
 
-    Json(DeviceDnsStats {
+    Ok(Json(DeviceDnsStats {
         ip,
         total_queries,
         blocked_queries,
-    })
-    .into_response()
+    }))
 }
 
 fn is_blocked_reason(reason: &str) -> bool {

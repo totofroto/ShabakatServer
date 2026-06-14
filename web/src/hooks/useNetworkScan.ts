@@ -1,4 +1,4 @@
-import { invoke, isTauri, listen } from "@/lib/transport";
+import { invoke, isTauri, listen, transport } from "@/lib/transport";
 import {
   checkPermissions,
   requestPermissions,
@@ -140,6 +140,8 @@ export type DeviceRow = {
   customIcon?: string | null;
   /** Smart name suggestions from the backend engine. */
   suggestedNames?: string[] | null;
+  /** True when the device is marked as ignored (whitelisted). */
+  isIgnored: boolean;
   /** Host replied on the current / last completed scan pass. */
   isOnline: boolean;
   /** First time this identity (MAC / IP key) appeared in our persisted history. */
@@ -148,6 +150,8 @@ export type DeviceRow = {
   lastSeen?: number | null;
   /** Unix epoch ms when this device was first added to persisted history. Null for legacy rows loaded before this field existed. */
   firstSeen?: number | null;
+  /** RSSI (signal strength) in dBm, if available. */
+  rssi?: number | null;
 };
 
 type DiscoveredDevicePayload = {
@@ -169,6 +173,8 @@ type DiscoveredDevicePayload = {
   ssdpServer?: string | null;
   /** Smart name suggestions from the backend engine (camelCase in IPC). */
   suggestedNames?: string[] | null;
+  /** RSSI (signal strength) in dBm. */
+  rssi?: number | null;
 };
 
 type ScanStartedPayload = {
@@ -329,11 +335,13 @@ function normalizeStoredDeviceRow(raw: unknown): DeviceRow | null {
     interrogationName: d.interrogationName ?? null,
     hostname: typeof d.hostname === "string" ? d.hostname : null,
     customName: d.customName ?? null,
+    isIgnored: Boolean(d.isIgnored),
     isOnline,
     // Disk snapshot = already part of history; badge is for fresh discoveries this session.
     isNew: false,
     lastSeen: typeof d.lastSeen === "number" ? d.lastSeen : null,
     firstSeen: typeof d.firstSeen === "number" ? d.firstSeen : null,
+    rssi: typeof d.rssi === "number" ? d.rssi : null,
   };
 }
 
@@ -358,9 +366,11 @@ function mapDiscoveredToRow(
     ssdpServer: p.ssdpServer?.trim() || null,
     suggestedNames: p.suggestedNames,
     customName: customNames[p.ip]?.trim() || null,
+    isIgnored: false,
     isOnline: true,
     isNew: false,
     lastSeen: Date.now(),
+    rssi: typeof p.rssi === "number" ? p.rssi : null,
   };
 }
 
@@ -641,8 +651,10 @@ type ServerDevice = {
   customIcon?: string | null;
   /** Smart name suggestions from the backend engine. */
   suggestedNames?: string[] | null;
+  isIgnored?: boolean | null;
   firstSeen?: number | null;
   lastSeen?: number | null;
+  rssi?: number | null;
   /** True when the device was seen in the most recently completed scan. */
   isOnline?: boolean | null;
 };
@@ -687,6 +699,7 @@ async function browserLoadDevices(): Promise<DeviceRow[]> {
           displayName: r.displayName?.trim() ?? null,
           customIcon: r.customIcon,
           suggestedNames: r.suggestedNames,
+          isIgnored: r.isIgnored ?? false,
           isOnline: online,
           isNew: false,
           lastSeen: r.lastSeen ?? null,
@@ -1421,17 +1434,20 @@ export function useNetworkScan() {
   }, [clearProgressTimer, ensureHistoryMapHydrated, ensurePermissionsForScan]);
 
   const cancelScan = useCallback(async () => {
-    if (!isTauri()) {
-      return;
-    }
     try {
-      await invoke("abort_scan");
+      if (isTauri()) {
+        await invoke("abort_scan");
+      } else {
+        await transport.fetch("/api/scan/abort", { method: "POST" });
+      }
     } catch (error) {
       console.error("Failed to abort scan:", error);
-      try {
-        await invoke("cancel_scan");
-      } catch (fallbackError) {
-        console.error("Fallback cancel_scan failed:", fallbackError);
+      if (isTauri()) {
+        try {
+          await invoke("cancel_scan");
+        } catch (fallbackError) {
+          console.error("Fallback cancel_scan failed:", fallbackError);
+        }
       }
     }
   }, []);

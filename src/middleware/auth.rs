@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderMap, Request, StatusCode},
+    http::{HeaderMap, Request},
     middleware::Next,
     response::Response,
 };
@@ -9,6 +11,7 @@ use axum_extra::extract::cookie::CookieJar;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 
 use crate::api::auth::Claims;
+use crate::api::error::ApiError;
 use crate::AppState;
 
 pub fn validate_token(token: &str, secret: &str) -> bool {
@@ -26,11 +29,16 @@ pub async fn auth_middleware(
     State(state): State<AppState>,
     req: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, ApiError> {
     let path = req.uri().path();
 
     // Whitelist authentication routes
     if !is_protected_route(path) {
+        return Ok(next.run(req).await);
+    }
+
+    // Development bypass: SHABAKAT_DISABLE_AUTH=true skips all token validation
+    if state.config.disable_auth {
         return Ok(next.run(req).await);
     }
 
@@ -83,7 +91,7 @@ pub async fn auth_middleware(
         log::warn!("[AUTH_DEBUG] Invalid token or cookie for path: {}", path);
     }
 
-    Err(StatusCode::UNAUTHORIZED)
+    Err(ApiError::Unauthorized("Access denied. Invalid or missing authentication token.".to_string()))
 }
 
 fn is_protected_route(path: &str) -> bool {

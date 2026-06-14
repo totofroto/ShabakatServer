@@ -10,7 +10,8 @@ export function LoginPage() {
   const error = searchParams.get("error");
 
   if (user && !loading) {
-    return <Navigate to="/" replace />;
+    const isServerMode = localStorage.getItem("shabakat_server_mode") === "true";
+    return <Navigate to={isServerMode ? "/devices" : "/"} replace />;
   }
 
   const getErrorMessage = (err: string) => {
@@ -63,7 +64,7 @@ export function LoginPage() {
               className="w-full bg-white text-black hover:bg-zinc-200 h-12 text-lg font-semibold transition-all"
             >
               <LogIn className="w-5 h-5 mr-2" />
-              Sign in with Google
+              Connect
             </Button>
           </CardContent>
         </Card>

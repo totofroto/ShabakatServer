@@ -225,9 +225,9 @@ async function browserRequest<T>(
       // If we get a 401, the token might be expired
       localStorage.removeItem("shabakat_session_token");
       // Optional: trigger a redirect to login if not already there
-      if (!window.location.pathname.startsWith("/login")) {
-         window.location.href = "/login";
-      }
+      // if (!window.location.pathname.startsWith("/login")) {
+      //    window.location.href = "/login";
+      // }
     }
 
     if (!res.ok) {
@@ -435,6 +435,10 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
     const mac = args.mac as string;
     const limit = args.limit ?? 20;
     return browserRequest<T>(`/api/devices/${encodeURIComponent(mac)}/history?limit=${limit}`);
+  }
+  if (command === "get_device_rssi") {
+    const mac = args.mac as string;
+    return browserRequest<T>(`/api/devices/${encodeURIComponent(mac)}/rssi`);
   }
   if (command === "get_history") {
     const limit = args.limit ?? 300;

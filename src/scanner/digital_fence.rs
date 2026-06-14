@@ -70,7 +70,17 @@ impl DigitalFence {
         // Bind to INADDR_ANY over Host Network mode to capture global multicast frames
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
         
-        let std_socket = std::net::UdpSocket::bind(addr)?;
+        let sock = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
+        sock.set_reuse_address(true)?;
+        #[cfg(unix)]
+        sock.set_reuse_port(true)?;
+        sock.bind(&addr.into())?;
+        
+        let std_socket: std::net::UdpSocket = sock.into();
         std_socket.set_nonblocking(true)?;
         let socket = UdpSocket::from_std(std_socket)?;
         
@@ -127,16 +137,17 @@ impl DigitalFence {
 
     async fn process_ambient_match(event: AmbientEvent, db: &AppDb, broadcast_tx: &broadcast::Sender<serde_json::Value>) {
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let mac_address = event.mac_address.clone();
+        let mac_address = super::arp::normalize_mac(&event.mac_address);
         let ip_address = event.ip_address.clone();
         let _protocol = event.protocol;
 
 
+        let mac_for_db = mac_address.clone();
         let res = db.execute(move |conn| {
             // Check if this physical layer signature already exists in your table
             let device_info: Option<(bool, bool)> = {
                 let mut stmt = conn.prepare("SELECT 1, is_ignored FROM devices WHERE mac = ?1").map_err(|e| e.to_string())?;
-                stmt.query_row(rusqlite::params![mac_address], |row| Ok((true, row.get::<_, i64>(1)? != 0))).optional().map_err(|e| e.to_string())?
+                stmt.query_row(rusqlite::params![mac_for_db], |row| Ok((true, row.get::<_, i64>(1)? != 0))).optional().map_err(|e| e.to_string())?
             };
 
             let (device_exists, is_ignored) = match device_info {
@@ -150,7 +161,7 @@ impl DigitalFence {
                 "INSERT INTO devices (mac, first_seen, last_seen, last_ip, likely_type) 
                  VALUES (?1, ?2, ?2, ?3, 'Digital Fence Discovery')
                  ON CONFLICT(mac) DO UPDATE SET last_seen = ?2, last_ip = ?3",
-                rusqlite::params![mac_address, now_ms, ip_address],
+                rusqlite::params![mac_for_db, now_ms, ip_address],
             ).map_err(|e| e.to_string())?;
 
             Ok::<_, String>((device_exists, is_ignored, affected_rows))
@@ -160,11 +171,11 @@ impl DigitalFence {
             if affected_rows > 0 {
                 // 🌟 Hub Execution Vector: Target is an intruder/unrecognized newcomer on the fence loop!
                 if !device_exists && !is_ignored {
-                    log::warn!("[FLIGHT_RECORDER] Perimeter Breach! Processing multi-channel intruder alerts for MAC: {}", event.mac_address);
+                    log::warn!("[FLIGHT_RECORDER] Perimeter Breach! Processing multi-channel intruder alerts for MAC: {}", mac_address);
 
                     // 1. Log the breach into the historical event registry
                     let db_clone = db.clone();
-                    let mac_clone = event.mac_address.clone();
+                    let mac_clone = mac_address.clone();
                     tokio::spawn(async move {
                         crate::storage::history::log_event(
                             &db_clone, 

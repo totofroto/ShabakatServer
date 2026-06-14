@@ -8,7 +8,7 @@ import {
   Wifi,
   Wrench,
 } from "lucide-react";
-import { NavLink, Outlet, Navigate } from "react-router-dom";
+import { NavLink, Outlet, Navigate, useLocation } from "react-router-dom";
 import {
   NotificationCenterBell,
   NotificationCenterPanel,
@@ -47,6 +47,7 @@ const tabBarItems: {
 export function AppShell() {
   const { lang, toggleLang, isRtl, dict } = useLanguage();
   const { user, loading, logout } = useAuth();
+  const location = useLocation();
 
   const [settings, setSettings] = useState<Record<string, string>>({});
 
@@ -88,9 +89,16 @@ export function AppShell() {
     );
   }
 
-  if (!user) {
-    return <Navigate to="/login" replace />;
+  // Redirect to /devices if shabakat_server_mode is enabled and we are at root index
+  const isServerMode = localStorage.getItem("shabakat_server_mode") === "true";
+  if (isServerMode && location.pathname === "/") {
+    return <Navigate to="/devices" replace />;
   }
+
+  // If there is logic that forces a redirect to a /login route, disable it.
+  // if (!user) {
+  //   return <Navigate to="/login" replace />;
+  // }
 
   const backdropType = settings["backdrop_type"] || "void";
   const backdropImage = settings["backdrop_image"];

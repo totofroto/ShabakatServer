@@ -102,6 +102,8 @@
   "lastOutage": "Letzter Ausfall: {min} Min, vor {days} Tagen",
   "noOutages": "Keine Ausfälle aufgezeichnet",
   "runSpeedTest": "Geschwindigkeitstest ausführen",
+  "learnDeviceAction": "Gerät lernen",
+  "ignoreDeviceAction": "Gerät ignorieren",
   "testing": "Testen…",
   "scoreBreakdown": "Score-Aufschlüsselung",
   "tabs": {

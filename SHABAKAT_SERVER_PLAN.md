@@ -282,7 +282,7 @@ CMD ["shabakat-server"]
 version: "3.8"
 services:
   shabakat:
-    image: shabakat-server:v4
+    image: shabakat-server:latest
     container_name: shabakat-server
     restart: unless-stopped
     network_mode: host          # CRITICAL: raw LAN access for SSDP/mDNS/ARP

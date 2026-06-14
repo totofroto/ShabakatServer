@@ -102,7 +102,8 @@ pub async fn list_devices_async(db: AppDb, online_only: bool) -> Result<Vec<Devi
 }
 
 pub async fn get_device_by_mac_async(db: AppDb, mac: String) -> Result<Option<DeviceRecord>, String> {
-    db.execute(move |conn| get_device_by_mac(conn, &mac)).await
+    let normalized = normalize_mac(&mac);
+    db.execute(move |conn| get_device_by_mac(conn, &normalized)).await
 }
 
 pub async fn upsert_device_alias(
@@ -130,16 +131,18 @@ pub async fn update_device_custom_fields(
     acknowledged: Option<bool>,
     custom_icon: Option<String>,
 ) -> Result<(), String> {
+    let normalized = normalize_mac(&mac);
     db.execute(move |conn| {
-        patch_device(conn, &mac, custom_name, notes, acknowledged, custom_icon).map(|_| ())
+        patch_device(conn, &normalized, custom_name, notes, acknowledged, custom_icon).map(|_| ())
     }).await
 }
 
 pub async fn ignore_device_async(db: AppDb, mac: String) -> Result<(), String> {
+    let normalized = normalize_mac(&mac);
     db.execute(move |conn| -> Result<(), String> {
         conn.execute(
             "UPDATE devices SET is_ignored = 1 WHERE mac = ?1",
-            params![mac],
+            params![normalized],
         ).map_err(|e| format!("ignore device: {e}"))?;
         Ok(())
     }).await
@@ -177,6 +180,7 @@ pub fn list_devices(conn: &Connection, online_only: bool) -> Result<Vec<DeviceRe
 }
 
 pub fn get_device_by_mac(conn: &Connection, mac: &str) -> Result<Option<DeviceRecord>, String> {
+    let normalized = normalize_mac(mac);
     let mut stmt = conn.prepare(
         "SELECT d.id, d.mac, d.first_seen, d.last_seen, d.last_ip, d.vendor, d.custom_name,
                 d.likely_type, d.hostname, d.mdns_hostname, d.ssdp_server, d.interrogation_name,
@@ -187,7 +191,7 @@ pub fn get_device_by_mac(conn: &Connection, mac: &str) -> Result<Option<DeviceRe
     ).map_err(|e| format!("prepare get device: {e}"))?;
 
     let mut rows = stmt
-        .query_map(params![mac], row_to_device)
+        .query_map(params![normalized], row_to_device)
         .map_err(|e| format!("query get device: {e}"))?;
 
     if let Some(row) = rows.next() {
@@ -204,6 +208,7 @@ pub fn patch_device(
     acknowledged: Option<bool>,
     custom_icon: Option<String>,
 ) -> Result<bool, String> {
+    let normalized = normalize_mac(mac);
     let mut updates = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -234,7 +239,7 @@ pub fn patch_device(
     );
     
     // Add mac as the last parameter
-    params.push(Box::new(mac.to_string()));
+    params.push(Box::new(normalized));
 
     // Convert Box<dyn ToSql> to &dyn ToSql
     let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -246,7 +251,8 @@ pub fn patch_device(
 }
 
 pub fn delete_device(conn: &Connection, mac: &str) -> Result<bool, String> {
-    let rows = conn.execute("DELETE FROM devices WHERE mac = ?1", params![mac])
+    let normalized = normalize_mac(mac);
+    let rows = conn.execute("DELETE FROM devices WHERE mac = ?1", params![normalized])
         .map_err(|e| format!("delete device: {e}"))?;
     Ok(rows > 0)
 }
@@ -316,7 +322,7 @@ fn upsert_discovered_device(
             let is_new = rows_affected == 1;
             let row: (i64, i64) = conn.query_row(
                 "SELECT id, is_ignored FROM devices WHERE mac = ?1",
-                params![dev.mac],
+                params![normalize_mac(&dev.mac)],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             ).map_err(|e| format!("fetch upserted id: {e}"))?;
             Ok((row.0, is_new, row.1 != 0))

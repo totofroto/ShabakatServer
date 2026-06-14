@@ -1,13 +1,14 @@
 use axum::{
     extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Json},
+    response::IntoResponse,
+    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::mpsc;
 
 use crate::{
+    api::error::{ApiError, ApiResult},
     scanner,
     storage::{self, devices as dev_store, networks as net_store},
     types::ScanEvent,
@@ -22,21 +23,13 @@ pub struct ScanRequest {
 pub async fn trigger_scan(
     State(state): State<AppState>,
     Json(req): Json<ScanRequest>,
-) -> impl IntoResponse {
+) -> ApiResult<impl IntoResponse> {
     let mode_str = req.mode.as_deref().unwrap_or("silent");
     let mode = scanner::ScanMode::from_str(mode_str);
     let scan_id = format!("manual-{}", storage::now_ms());
 
-    let guard = match scanner::ScanGuard::try_acquire() {
-        Some(g) => g,
-        None => {
-            return (
-                StatusCode::CONFLICT,
-                Json(json!({"error": "SCAN_IN_PROGRESS"})),
-            )
-                .into_response()
-        }
-    };
+    let guard = scanner::ScanGuard::try_acquire()
+        .ok_or_else(|| ApiError::ScanInProgress("A scan is already running".into()))?;
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<ScanEvent>();
     let broadcast_tx = state.broadcast_tx.clone();
@@ -49,41 +42,37 @@ pub async fn trigger_scan(
 
     // Scan task
     tokio::spawn(async move {
-        let _ = broadcast_tx.send(json!({
-            "event": "scan_started",
-            "data": { "scanId": scan_id }
-        }));
+        let lifecycle = scanner::ScanLifecycle::new(scan_id.clone(), broadcast_tx.clone());
 
         // Detect current network identity before the scan.
         let network_info = scanner::network_identity::get_current_network_info().await;
         let network_id: Option<i64> = if let Some(ref bssid) = network_info.bssid {
             let now = storage::now_ms();
-            let conn_res = db.connect_dedicated();
-            match conn_res {
-                Ok(conn) => {
-                    match net_store::upsert_network(
-                        &conn,
-                        network_info.ssid.as_deref(),
-                        bssid,
-                        network_info.gateway.as_deref(),
-                        network_info.subnet.as_deref(),
-                        now,
-                    ).await {
-                        Ok(id) => Some(id),
-                        Err(e) => {
-                            log::warn!("[SCAN] Network upsert failed: {e}");
-                            None
-                        }
-                    }
-                }
+            let bssid_clone = bssid.clone();
+            let ssid_clone = network_info.ssid.clone();
+            let gateway_clone = network_info.gateway.clone();
+            let subnet_clone = network_info.subnet.clone();
+
+            match db.execute(move |conn| {
+                net_store::upsert_network(
+                    conn,
+                    ssid_clone.as_deref(),
+                    &bssid_clone,
+                    gateway_clone.as_deref(),
+                    subnet_clone.as_deref(),
+                    now,
+                )
+            }).await {
+                Ok(id) => Some(id),
                 Err(e) => {
-                    log::warn!("[SCAN] DB connect failed: {e}");
+                    log::warn!("[SCAN] Network upsert failed: {e}");
                     None
                 }
             }
         } else {
             None
         };
+
 
         match scanner::scan_local_network_pre_guarded(Some(state.db.clone()), Some(state.devices.clone()), guard, Some(event_tx), mode, scan_id.clone())
             .await
@@ -102,15 +91,11 @@ pub async fn trigger_scan(
                     d.generate_suggested_names();
                 }
 
-                let _ = broadcast_tx.send(json!({
-                    "event": "scan_finished",
-                    "data": {
-                        "scanId": scan_id,
-                        "devices": devices_with_suggestions,
-                        "deviceCount": result.devices.len(),
-                        "scannedHosts": result.scanned_hosts,
-                        "averageLatencyMs": result.average_latency_ms,
-                    }
+                lifecycle.finish(json!({
+                    "devices": devices_with_suggestions,
+                    "deviceCount": result.devices.len(),
+                    "scannedHosts": result.scanned_hosts,
+                    "averageLatencyMs": result.average_latency_ms,
                 }));
 
                 // Persist asynchronously — never block the broadcast above.
@@ -182,16 +167,12 @@ pub async fn trigger_scan(
             }
             Err(e) => {
                 log::error!("[FLIGHT_RECORDER] Scan engine error: {}", e);
-                // Use "scan_failed" — matches the frontend's unlistenScanFailed handler.
-                let _ = broadcast_tx.send(json!({
-                    "event": "scan_failed",
-                    "data": { "scanId": scan_id, "error": e }
-                }));
+                lifecycle.fail(e);
             }
         }
     });
 
-    Json(json!({"scanId": scan_id_out, "status": "started"})).into_response()
+    Ok(Json(json!({"scanId": scan_id_out, "status": "started"})))
 }
 
 pub async fn relay_scan_events(
@@ -223,8 +204,13 @@ pub async fn relay_scan_events(
     }
 }
 
-pub async fn scan_status(State(_state): State<AppState>) -> Json<serde_json::Value> {
-    Json(json!({
+pub async fn scan_status(State(_state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(json!({
         "isScanning": scanner::is_scan_active(),
-    }))
+    })))
+}
+
+pub async fn abort_scan() -> ApiResult<impl IntoResponse> {
+    scanner::abort_scan();
+    Ok(axum::http::StatusCode::OK)
 }

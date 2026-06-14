@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
-    response::{IntoResponse, Json},
+    response::IntoResponse,
+    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -9,20 +9,17 @@ use serde_json::json;
 use crate::{
     storage::devices as dev_store,
     AppState,
+    api::error::{ApiResult, ApiError},
+    scanner::arp::normalize_mac,
 };
 
 pub async fn list_devices(
     State(state): State<AppState>,
-) -> impl IntoResponse {
+) -> ApiResult<impl IntoResponse> {
     log::info!("[API] Fetching all devices from database");
     
-    let mut db_rows = match dev_store::list_devices_async(state.db.clone(), false).await {
-        Ok(rows) => rows,
-        Err(e) => {
-            log::error!("[API] Failed to list devices: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
-        }
-    };
+    let mut db_rows = dev_store::list_devices_async(state.db.clone(), false).await
+        .map_err(ApiError::Internal)?;
 
     if db_rows.is_empty() {
         // Fallback to in-memory devices if DB is empty (e.g. first scan in progress)
@@ -52,28 +49,31 @@ pub async fn list_devices(
                     "suggestedNames": d.suggested_names,
                 })
             }).collect();
-            return Json(json!(mapped)).into_response();
+            return Ok(Json(json!(mapped)).into_response());
         }
     }
 
     log::info!("[API] Returning {} devices from database", db_rows.len());
     for dev in &mut db_rows {
+        dev.is_online = dev.is_online(); // Use the dynamic check
         dev.generate_suggested_names();
     }
-    Json(json!(db_rows)).into_response()
+    Ok(Json(json!(db_rows)).into_response())
 }
 
 pub async fn get_device(
     State(state): State<AppState>,
     Path(mac): Path<String>,
-) -> impl IntoResponse {
-    match dev_store::get_device_by_mac_async(state.db.clone(), mac).await {
-        Ok(Some(mut row)) => {
+) -> ApiResult<impl IntoResponse> {
+    let normalized = normalize_mac(&mac);
+    match dev_store::get_device_by_mac_async(state.db.clone(), normalized).await
+        .map_err(ApiError::Internal)? {
+        Some(mut row) => {
+            row.is_online = row.is_online(); // Use the dynamic check
             row.generate_suggested_names();
-            Json(row).into_response()
+            Ok(Json(row).into_response())
         },
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        None => Err(ApiError::NotFound("Device not found".to_string())),
     }
 }
 
@@ -89,24 +89,23 @@ pub async fn patch_device(
     State(state): State<AppState>,
     Path(mac): Path<String>,
     Json(body): Json<DevicePatch>,
-) -> impl IntoResponse {
-    match dev_store::update_device_custom_fields(
+) -> ApiResult<impl IntoResponse> {
+    let normalized = normalize_mac(&mac);
+    dev_store::update_device_custom_fields(
         state.db.clone(),
-        mac,
+        normalized,
         body.custom_name,
         body.notes,
         body.acknowledged,
         body.custom_icon,
     )
     .await
-    {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    }
+    .map_err(ApiError::Internal)?;
+    
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DeviceAliasRequest {
     pub ip_address: String,
     pub alias_name: String,
@@ -115,24 +114,87 @@ pub struct DeviceAliasRequest {
 pub async fn set_device_alias(
     State(state): State<AppState>,
     Json(body): Json<DeviceAliasRequest>,
-) -> impl IntoResponse {
-    match dev_store::upsert_device_alias(state.db.clone(), body.ip_address, body.alias_name).await {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    }
+) -> ApiResult<impl IntoResponse> {
+    dev_store::upsert_device_alias(state.db.clone(), body.ip_address, body.alias_name).await
+        .map_err(ApiError::Internal)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct DeviceLearnRequest {
+    pub mac_address: String,
+    pub name: String,
+}
+
+pub async fn learn_device(
+    State(state): State<AppState>,
+    Json(body): Json<DeviceLearnRequest>,
+) -> ApiResult<impl IntoResponse> {
+    let normalized = normalize_mac(&body.mac_address);
+    log::info!("[API] Learning device: {} -> {}", normalized, body.name);
+
+    state.db.execute(move |conn| {
+        conn.execute(
+            "UPDATE devices SET acknowledged = 1, custom_name = ?1 WHERE mac = ?2",
+            [body.name, normalized],
+        )
+    }).await.map_err(ApiError::from)?;
+
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct DeviceIgnoreRequest {
+    pub mac_address: String,
+}
+
+pub async fn ignore_device(
+    State(state): State<AppState>,
+    Json(body): Json<DeviceIgnoreRequest>,
+) -> ApiResult<impl IntoResponse> {
+    let normalized = normalize_mac(&body.mac_address);
+    log::info!("[API] Ignoring device: {}", normalized);
+
+    dev_store::ignore_device_async(state.db.clone(), normalized).await
+        .map_err(ApiError::Internal)?;
+    
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub async fn delete_device(
     State(state): State<AppState>,
     Path(mac): Path<String>,
-) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    };
-    match dev_store::delete_device(&conn, &mac).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+) -> ApiResult<impl IntoResponse> {
+    let normalized = normalize_mac(&mac);
+    let deleted = state.db.execute(move |conn| {
+        dev_store::delete_device(conn, &normalized)
+    }).await.map_err(ApiError::from)?;
+
+    if deleted {
+        Ok(axum::http::StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound("Device not found".to_string()))
     }
 }
+
+pub async fn get_device_rssi(
+    State(state): State<AppState>,
+    Path(mac): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let now = crate::storage::now_ms();
+    let twenty_four_hours_ago = now - (24 * 60 * 60 * 1000);
+
+    let history = state.db.execute(move |conn| {
+        crate::storage::history::get_device_rssi_history(conn, &mac, twenty_four_hours_ago)
+    }).await.map_err(ApiError::Internal)?;
+
+    let mapped: Vec<serde_json::Value> = history.into_iter().map(|(ts, rssi)| {
+        json!({
+            "timestamp": ts,
+            "rssi": rssi,
+        })
+    }).collect();
+    
+    Ok(Json(mapped))
+}
+

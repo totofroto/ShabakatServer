@@ -11,7 +11,8 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.7", features = ["ws", "multipart"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "limit"] }
-libsql = { version = "0.6.0", features = ["hrana"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -33,4 +34,14 @@ cookie = "0.18"
 axum-extra = { version = "0.9", features = ["cookie"] }
 time = { version = "0.3.47", features = ["local-offset", "macros", "formatting", "parsing"] }
 async-trait = "0.1.89"
-lettre = "0.11.22"
+lettre = { version = "0.11.22", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+include_dir = "0.7"
+mime_guess = "2.0"
+thiserror = "2.0.18"
+
+[profile.release]
+lto           = true
+codegen-units = 1
+panic         = "abort"
+strip         = true
+opt-level     = 3

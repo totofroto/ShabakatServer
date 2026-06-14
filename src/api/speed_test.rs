@@ -2,78 +2,71 @@ use std::time::{Duration, Instant};
 
 use axum::{
     extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Json},
+    response::IntoResponse,
+    Json,
 };
-use libsql::params;
 use serde_json::json;
 
-use crate::{storage, AppState};
+use crate::{
+    api::error::{ApiError, ApiResult},
+    storage, 
+    AppState
+};
 
 pub async fn run_speed_test(
     State(state): State<AppState>,
     body_content: Option<String>
-) -> impl IntoResponse {
+) -> ApiResult<impl IntoResponse> {
     log::info!("[API_TRACE] Speed test invoked. Raw body received: {:?}", body_content);
-    match do_speed_test().await {
-        Ok((download_mbps, upload_mbps, ping_ms)) => {
-            let now = storage::now_ms();
-            let conn = match state.db.connect().await {
-                Ok(c) => c,
-                Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-            };
-            let _ = conn.execute(
-                "INSERT INTO speed_tests (tested_at, download_mbps, upload_mbps, ping_ms)
-                    VALUES (?1, ?2, ?3, ?4)",
-                params![now, download_mbps, upload_mbps, ping_ms],
-            ).await;
+    let (download_mbps, upload_mbps, ping_ms) = do_speed_test().await
+        .map_err(ApiError::Internal)?;
 
-            Json(json!({
-                "downloadMbps": download_mbps,
-                "uploadMbps":   upload_mbps,
-                "pingMs":       ping_ms,
-                "testedAt":     now,
-            }))
-            .into_response()
-        }
-        Err(e) => {
-            log::error!("[SPEED_TEST_FAILURE] Error during execution phase: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e).into_response()
-        }
-    }
+    let now = storage::now_ms();
+    let _ = state.db.execute(move |conn| {
+        conn.execute(
+            "INSERT INTO speed_tests (tested_at, download_mbps, upload_mbps, ping_ms)
+                VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![now, download_mbps, upload_mbps, ping_ms],
+        )
+    }).await;
+
+    Ok(Json(json!({
+        "downloadMbps": download_mbps,
+        "uploadMbps":   upload_mbps,
+        "pingMs":       ping_ms,
+        "testedAt":     now,
+    })))
 }
 
-pub async fn speed_test_history(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    };
-
-    let mut rows = match conn
-        .query(
+pub async fn speed_test_history(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let results = state.db.execute(move |conn| -> Result<Vec<serde_json::Value>, String> {
+        let mut stmt = conn.prepare(
             "SELECT id, tested_at, download_mbps, upload_mbps, ping_ms
              FROM speed_tests
              ORDER BY tested_at DESC
-             LIMIT 30",
-            (),
-        ).await {
-            Ok(r) => r,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        };
+             LIMIT 30"
+        ).map_err(|e| e.to_string())?;
 
-    let mut results = Vec::new();
-    while let Ok(Some(row)) = rows.next().await {
-        results.push(json!({
-            "id":           row.get::<Option<i64>>(0).unwrap_or_default().unwrap_or_default(),
-            "testedAt":     row.get::<Option<i64>>(1).unwrap_or_default().unwrap_or_default(),
-            "downloadMbps": row.get::<Option<f64>>(2).unwrap_or_default(),
-            "uploadMbps":   row.get::<Option<f64>>(3).unwrap_or_default(),
-            "pingMs":       row.get::<Option<f64>>(4).unwrap_or_default(),
-        }));
-    }
+        let rows = stmt.query_map([], |row| {
+            Ok(json!({
+                "id":           row.get::<_, Option<i64>>(0).unwrap_or_default().unwrap_or_default(),
+                "testedAt":     row.get::<_, Option<i64>>(1).unwrap_or_default().unwrap_or_default(),
+                "downloadMbps": row.get::<_, Option<f64>>(2).unwrap_or_default(),
+                "uploadMbps":   row.get::<_, Option<f64>>(3).unwrap_or_default(),
+                "pingMs":       row.get::<_, Option<f64>>(4).unwrap_or_default(),
+            }))
+        }).map_err(|e| e.to_string())?;
 
-    Json(json!(results)).into_response()
+        let mut results = Vec::new();
+        for i in rows.flatten() {
+            results.push(i);
+        }
+        Ok(results)
+    }).await.map_err(ApiError::Internal)?;
+
+    Ok(Json(json!(results)))
 }
+
 
 async fn do_speed_test() -> Result<(f64, f64, f64), String> {
     let client = reqwest::Client::builder()

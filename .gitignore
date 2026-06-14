@@ -22,3 +22,11 @@ yarn-error.log*
 *.dmg
 *.iso
 *.pkg
+/ui_dist
+
+# Private credentials and temporary logs
+home-setup.md
+server.log
+/main.rs
+instructions.txt
+deploy_to_nas.sh

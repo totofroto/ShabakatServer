@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{convert::Infallible, sync::OnceLock, time::Instant};
 
+use crate::api::error::{ApiError, ApiResult};
 use crate::{scanner, AppState};
 
 static START_TIME: OnceLock<Instant> = OnceLock::new();
@@ -19,7 +20,7 @@ pub fn init_uptime() {
     let _ = START_TIME.get_or_init(Instant::now);
 }
 
-pub async fn get_debug_state(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_debug_state(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     let _uptime_secs = START_TIME.get().map(|t| t.elapsed().as_secs()).unwrap_or(0);
 
     // Check DB status
@@ -31,11 +32,11 @@ pub async fn get_debug_state(State(state): State<AppState>) -> impl IntoResponse
     // File descriptors (Linux only)
     let open_fds = get_open_fds();
 
-    Json(json!({
+    Ok(Json(json!({
         "is_scanner_active": is_scanning,
         "db_connected": db_connected,
         "open_fds": open_fds,
-    }))
+    })))
 }
 
 fn get_open_fds() -> usize {
@@ -60,7 +61,7 @@ pub struct ProbeResponse {
     pub raw_output: String,
 }
 
-pub async fn debug_probe(Json(payload): Json<ProbeRequest>) -> impl IntoResponse {
+pub async fn debug_probe(Json(payload): Json<ProbeRequest>) -> ApiResult<impl IntoResponse> {
     let target = payload.target_ip.trim().to_string();
     let probe_type = payload.probe_type.to_lowercase();
 
@@ -78,12 +79,12 @@ pub async fn debug_probe(Json(payload): Json<ProbeRequest>) -> impl IntoResponse
                         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
                         let raw_output = if stdout.is_empty() { stderr } else { stdout };
-                        Json(ProbeResponse { online, raw_output })
+                        Ok(Json(ProbeResponse { online, raw_output }))
                     }
-                    Err(e) => Json(ProbeResponse {
+                    Err(e) => Ok(Json(ProbeResponse {
                         online: false,
                         raw_output: format!("Failed to execute ping: {}", e),
-                    }),
+                    })),
                 }
             }
             "arp" => {
@@ -94,7 +95,7 @@ pub async fn debug_probe(Json(payload): Json<ProbeRequest>) -> impl IntoResponse
                 } else {
                     format!("No entry found in ARP table for {}", target)
                 };
-                Json(ProbeResponse { online, raw_output })
+                Ok(Json(ProbeResponse { online, raw_output }))
             }
             "udp_trick" => {
                 scanner::arp::nudge_neighbor(&target);
@@ -113,22 +114,22 @@ pub async fn debug_probe(Json(payload): Json<ProbeRequest>) -> impl IntoResponse
                         target
                     )
                 };
-                Json(ProbeResponse { online, raw_output })
+                Ok(Json(ProbeResponse { online, raw_output }))
             }
-            _ => Json(ProbeResponse {
-                online: false,
-                raw_output: format!("Unknown probe type: {}", probe_type),
-            }),
+            _ => Err(ApiError::BadRequest(format!(
+                "Unknown probe type: {}",
+                probe_type
+            ))),
         }
     };
 
     match tokio::time::timeout(std::time::Duration::from_secs(5), probe_future).await {
         Ok(response) => response,
-        Err(_) => Json(ProbeResponse {
+        Err(_) => Ok(Json(ProbeResponse {
             online: false,
             raw_output: "Error: Diagnostic probe timed out after 5 seconds. Connection dropped."
                 .to_string(),
-        }),
+        })),
     }
 }
 
@@ -140,9 +141,10 @@ pub async fn stream_logs(
     let stream = stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
             Ok(msg) => Some((Ok(Event::default().data(msg)), rx)),
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                Some((Ok(Event::default().data("[SYSTEM] Log stream lagged, some messages lost")), rx))
-            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => Some((
+                Ok(Event::default().data("[SYSTEM] Log stream lagged, some messages lost")),
+                rx,
+            )),
             Err(_) => None,
         }
     });
@@ -160,12 +162,10 @@ pub struct TerminalResponse {
     pub output: String,
 }
 
-pub async fn run_terminal_command(Json(payload): Json<TerminalRequest>) -> impl IntoResponse {
+pub async fn run_terminal_command(Json(payload): Json<TerminalRequest>) -> ApiResult<impl IntoResponse> {
     let command_parts: Vec<&str> = payload.command.split_whitespace().collect();
     if command_parts.is_empty() {
-        return Json(TerminalResponse {
-            output: "Error: No command provided".to_string(),
-        });
+        return Err(ApiError::BadRequest("No command provided".to_string()));
     }
 
     let cmd = command_parts[0];
@@ -173,12 +173,10 @@ pub async fn run_terminal_command(Json(payload): Json<TerminalRequest>) -> impl 
 
     let whitelist = ["ls", "cat", "arp", "ping", "df", "ps"];
     if !whitelist.contains(&cmd) {
-        return Json(TerminalResponse {
-            output: format!(
-                "Error: Command '{}' is not whitelisted. Allowed: {:?}",
-                cmd, whitelist
-            ),
-        });
+        return Err(ApiError::BadRequest(format!(
+            "Command '{}' is not whitelisted. Allowed: {:?}",
+            cmd, whitelist
+        )));
     }
 
     // Intercept specific commands for specialized handling
@@ -215,8 +213,8 @@ pub async fn run_terminal_command(Json(payload): Json<TerminalRequest>) -> impl 
                                     .unwrap_or_else(|_| "unknown".to_string())
                                     .trim()
                                     .to_string();
-                                let stat =
-                                    std::fs::read_to_string(format!("/proc/{}/stat", pid)).unwrap_or_default();
+                                let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid))
+                                    .unwrap_or_default();
                                 let state = stat.split_whitespace().nth(2).unwrap_or("?");
                                 ps_out.push_str(&format!("{:<8} {:<10} {}\n", pid, state, comm));
                             }
@@ -250,5 +248,5 @@ pub async fn run_terminal_command(Json(payload): Json<TerminalRequest>) -> impl 
         }
     };
 
-    Json(TerminalResponse { output })
+    Ok(Json(TerminalResponse { output }))
 }

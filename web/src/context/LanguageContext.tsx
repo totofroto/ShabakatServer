@@ -9,8 +9,9 @@ import {
 import enDict from "../locales/en.json";
 import deDict from "../locales/de.json";
 import arDict from "../locales/ar.json";
+import { t as tFn, type AppLang } from "../lib/i18n";
 
-export type AppLang = "en" | "ar" | "de";
+export type { AppLang };
 
 type Dictionary = typeof enDict;
 
@@ -26,6 +27,7 @@ type LanguageContextValue = {
   setLang: (lang: AppLang) => void;
   toggleLang: () => void;
   dict: Dictionary;
+  t: (key: string) => string;
 };
 
 const LS_KEY = "shabakat_lang";
@@ -69,6 +71,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const isRtl = lang === "ar";
   const dict = dictionaries[lang] || enDict;
 
+  const t = useCallback((key: string) => {
+    return tFn(lang, key, dict);
+  }, [lang, dict]);
+
   // Keep the HTML `dir` attribute in sync so native browser RTL rendering
   // (text alignment, scrollbars, flex rows, etc.) works without extra CSS.
   useEffect(() => {
@@ -77,7 +83,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   }, [isRtl, lang]);
 
   return (
-    <LanguageContext.Provider value={{ lang, isRtl, setLang, toggleLang, dict }}>
+    <LanguageContext.Provider value={{ lang, isRtl, setLang, toggleLang, dict, t }}>
       {children}
     </LanguageContext.Provider>
   );

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use log::info;
-use libsql::params;
 use tokio::net::TcpStream;
 
 use crate::{storage, AppState};
@@ -19,12 +18,12 @@ pub async fn start_outage_monitor(state: AppState) {
             let time_str = format_hhmm_utc(now);
             info!("[OUTAGE_DETECTOR] Internet DOWN at {time_str} UTC");
 
-            if let Ok(conn) = state.db.connect().await {
-                let _ = conn.execute(
+            let _ = state.db.execute(move |conn| {
+                conn.execute(
                     "INSERT INTO outages (started_at, ended_at, duration_ms) VALUES (?1, NULL, NULL)",
-                    params![now],
-                ).await;
-            }
+                    rusqlite::params![now],
+                )
+            }).await;
 
             // 1. Log the outage into the unified historical event registry
             crate::storage::history::log_event(
@@ -40,30 +39,26 @@ pub async fn start_outage_monitor(state: AppState) {
             was_down = false;
             let time_str = format_hhmm_utc(now);
 
-            let mut duration_ms: i64 = 0;
-            if let Ok(conn) = state.db.connect().await {
-                let rows = conn.query(
+            let res: Result<i64, String> = state.db.execute(move |conn| -> Result<i64, String> {
+                let started_at: Option<i64> = conn.query_row(
                     "SELECT started_at FROM outages WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
-                    (),
-                ).await.ok();
-                
-                let mut started_at: Option<i64> = None;
-                if let Some(mut r) = rows {
-                    if let Ok(Some(row)) = r.next().await {
-                        started_at = row.get(0).ok();
-                    }
-                }
+                    [],
+                    |row| row.get(0)
+                ).ok();
 
                 if let Some(s_at) = started_at {
                     let dur = now - s_at;
-                    let _ = conn.execute(
+                    conn.execute(
                         "UPDATE outages SET ended_at = ?1, duration_ms = ?2 WHERE ended_at IS NULL",
-                        params![now, dur],
-                    ).await;
-                    duration_ms = dur;
+                        rusqlite::params![now, dur],
+                    ).map_err(|e| e.to_string())?;
+                    Ok(dur)
+                } else {
+                    Ok(0)
                 }
-            };
+            }).await;
 
+            let duration_ms = res.unwrap_or(0);
             let mins = duration_ms / 60_000;
             info!("[OUTAGE_DETECTOR] Internet UP — outage lasted {mins}m");
 
@@ -82,6 +77,7 @@ pub async fn start_outage_monitor(state: AppState) {
         tokio::time::sleep(Duration::from_secs(60)).await;
     }
 }
+
 
 async fn is_internet_reachable() -> bool {
     matches!(

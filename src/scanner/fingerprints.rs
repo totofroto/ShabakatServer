@@ -25,7 +25,7 @@ pub struct FingerprintRegistry {
 
 impl FingerprintRegistry {
     pub fn load() -> Self {
-        let path = "fingerprints.json";
+        let path = "resources/fingerprints.json";
         match fs::read_to_string(path) {
             Ok(content) => match serde_json::from_str::<Vec<Fingerprint>>(&content) {
                 Ok(fingerprints) => {
@@ -396,13 +396,18 @@ pub fn classify_from_vendor(vendor: &str, open_ports: &[u16], current_label: &st
     // Port-data guard: promote vendor when there is no port signal, or if the port signal is generic
     if open_ports.is_empty() || is_generic_port_fingerprint(current_label) {
         if l.contains("samsung") {
-            return Some("Samsung Device".to_string());
+            // Samsung mobile devices often don't have many open ports, 
+            // but we want them to show up as phones.
+            return Some("Samsung Phone".to_string());
         }
         if l.contains("apple") {
             return Some("Apple Device".to_string());
         }
         if l.contains("google") {
-            return Some("Google Device".to_string());
+            return Some("Google Pixel / Phone".to_string());
+        }
+        if l.contains("huawei") || l.contains("xiaomi") || l.contains("oneplus") {
+            return Some(format!("{} Phone", v));
         }
     }
 
@@ -833,7 +838,7 @@ mod tests {
     fn vendor_samsung_no_ports() {
         assert_eq!(
             classify_from_vendor("Samsung Electronics", &[], ""),
-            Some("Samsung Device".to_string())
+            Some("Samsung Phone".to_string())
         );
     }
 
@@ -841,7 +846,7 @@ mod tests {
     fn vendor_samsung_with_generic_port_label() {
         assert_eq!(
             classify_from_vendor("Samsung Electronics", &[80, 443], "HTTP Device"),
-            Some("Samsung Device".to_string())
+            Some("Samsung Phone".to_string())
         );
     }
 

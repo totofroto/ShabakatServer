@@ -1,28 +1,33 @@
 #!/bin/bash
 set -e
 
-echo "Building docker image for linux/amd64..."
-docker buildx build --platform linux/amd64 -t shabakat-server:latest --load .
+# Configuration
+NAS_IP="192.168.254.18"
+NAS_USER="totofroto"
+NAS_PATH="/volume1/Docker/ShabakatServer"
 
-echo "Saving image to /tmp/shabakat-server.tar.gz..."
-docker save shabakat-server:latest | gzip > /tmp/shabakat-server.tar.gz
+echo "--- 🚀 Deploying Shabakat Unified Binary ---"
 
-echo "Transferring configuration to WADDAN..."
-scp -o IdentitiesOnly=yes -o PreferredAuthentications=password docker-compose.yml totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
-scp -o IdentitiesOnly=yes -o PreferredAuthentications=password .env.example totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
+# 1. Use rsync to transfer the project files
+echo "🔄 Syncing to NAS via rsync..."
+ssh $NAS_USER@$NAS_IP "mkdir -p $NAS_PATH"
+rsync -avz --progress \
+  --exclude 'target' \
+  --exclude 'node_modules' \
+  --exclude '.git' \
+  --exclude '.env' \
+  --exclude 'shabakat.tar.gz' \
+  --exclude 'web/node_modules' \
+  --exclude 'web/dist' \
+  . $NAS_USER@$NAS_IP:$NAS_PATH/
 
-echo "Transferring debug toolkit..."
-scp -o IdentitiesOnly=yes -o PreferredAuthentications=password scripts/shabakat-debug.sh totofroto@192.168.254.18:/volume1/Docker/shabakat-server/
-ssh -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'chmod +x /volume1/Docker/shabakat-server/shabakat-debug.sh'
+# 2. SSH into NAS, force a clean, multi-stage production build, and spin it up
+echo "🏗️  Remote build and restart..."
+ssh -t $NAS_USER@$NAS_IP "
+  cd $NAS_PATH && \
+  sudo docker compose down && \
+  sudo docker compose build --no-cache && \
+  sudo docker compose up -d --force-recreate
+"
 
-echo "Transferring image to WADDAN..."
-scp -o IdentitiesOnly=yes -o PreferredAuthentications=password /tmp/shabakat-server.tar.gz totofroto@192.168.254.18:/tmp/
-
-echo "Loading image on WADDAN..."
-ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo docker load -i /tmp/shabakat-server.tar.gz'
-
-echo "Restarting shabakat-server on WADDAN..."
-ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo mkdir -p /volume1/Docker/shabakat-server/data && sudo chmod -R 777 /volume1/Docker/shabakat-server/data && sudo docker stop shabakat-server || true && sudo docker rm shabakat-server || true && cd /volume1/Docker/shabakat-server && sudo docker compose up -d'
-
-echo "Verifying logs..."
-ssh -t -o IdentitiesOnly=yes -o PreferredAuthentications=password totofroto@192.168.254.18 'sudo docker logs --tail 10 shabakat-server'
+echo "--- ✅ Deployment Complete ---"

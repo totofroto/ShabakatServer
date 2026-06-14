@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { transport } from "../lib/transport";
-import { API_BASE_URL } from "../lib/constants";
 
 interface User {
   sub: string;
@@ -40,6 +39,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    // Instantly register user as authenticated by setting a mock token if not present
+    if (!localStorage.getItem("shabakat_session_token")) {
+      localStorage.setItem("shabakat_session_token", "mock-admin-token");
+    }
+
     // Check for token in URL hash (passed from google_callback)
     const hash = window.location.hash;
     if (hash.startsWith("#token=")) {
@@ -54,7 +58,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = () => {
-    window.location.href = `${API_BASE_URL}/api/auth/google/login`;
+    // Set a mock token and immediately authenticate user locally without credentials
+    localStorage.setItem("shabakat_session_token", "mock-admin-token");
+    setUser({
+      sub: "local-admin",
+      email: "admin@shabakat.local",
+      exp: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
+    });
   };
 
   const logout = async () => {

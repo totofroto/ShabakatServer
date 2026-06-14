@@ -586,7 +586,13 @@ function DeviceInspector({
   onCopyIp: _onCopyIp,
   lang,
 }: DeviceInspectorProps) {
-  const t = (key: keyof typeof UI): string => (UI[key] as any)[lang] || UI[key].en;
+  const t = (key: string): string => {
+    const entry = (UI as any)[key];
+    if (entry) {
+      return (entry as any)[lang] || entry.en || key;
+    }
+    return key;
+  };
   const forensicBusy = forensicAutoScanning || isPortScanRunning;
   const criticalOpen = openPorts.includes(22) || openPorts.includes(3389);
   const httpCleartextWarn = openPorts.includes(80) && !openPorts.includes(443);
@@ -795,8 +801,18 @@ export function DevicesPage() {
   const { lanScanAllowed } = useNetworkConnectivity();
   const { names: customNames, saveName: saveCustomName } = useCustomNames();
   const { message: toastMessage, showToast } = useToast();
-  const { lang, isRtl } = useLanguage();
-  const t = useCallback((key: keyof typeof UI): string => (UI[key] as any)[lang] || UI[key].en, [lang]);
+  const { lang, isRtl, t: globalT } = useLanguage();
+  const t = useCallback(
+    (key: string): string => {
+      const entry = (UI as any)[key];
+      if (entry) {
+        return (entry as any)[lang] || entry.en || key;
+      }
+      return globalT(key);
+    },
+    [lang, globalT],
+  );
+
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null);
   const [apiNetwork, setApiNetwork] = useState<{ssid: string | null; gateway: string | null} | null>(null);
   const [viewMode, setViewMode] = useState<DevicesViewMode>("list");
@@ -2025,6 +2041,9 @@ export function DevicesPage() {
                     body: JSON.stringify({ custom_icon: url }),
                   });
                 }}
+                onIgnore={() => {
+                  patchDevice(selectedDevice.ip, { isIgnored: true });
+                }}
                 onClose={() => setSelectedDevice(null)}
                 strings={{
                   deviceDetails: t("deviceDetailsDashboard"),
@@ -2046,6 +2065,8 @@ export function DevicesPage() {
                   deepScanNeedIp: t("deepScanNeedIp"),
                   deepScanPortsProgress: t("deepScanPortsProgress"),
                   deepScanOpenPortsTitle: t("deepScanOpenPortsTitle"),
+                  learnDeviceAction: t("learnDeviceAction"),
+                  ignoreDeviceAction: t("ignoreDeviceAction"),
                 }}
                 showUserMessage={showToast}
               />
@@ -2124,6 +2145,9 @@ export function DevicesPage() {
                     body: JSON.stringify({ custom_icon: url }),
                   });
                 }}
+                onIgnore={() => {
+                  patchDevice(selectedDevice.ip, { isIgnored: true });
+                }}
                 onClose={() => setSelectedDevice(null)}
                 strings={{
                   deviceDetails: t("deviceDetailsDashboard"),
@@ -2145,6 +2169,8 @@ export function DevicesPage() {
                   deepScanNeedIp: t("deepScanNeedIp"),
                   deepScanPortsProgress: t("deepScanPortsProgress"),
                   deepScanOpenPortsTitle: t("deepScanOpenPortsTitle"),
+                  learnDeviceAction: t("learnDeviceAction"),
+                  ignoreDeviceAction: t("ignoreDeviceAction"),
                 }}
                 showUserMessage={showToast}
               />

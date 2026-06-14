@@ -1,48 +1,41 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde_json::json;
 
-use crate::{scanner, storage::networks as net_store, storage::devices as dev_store, AppState};
+use crate::api::error::{ApiError, ApiResult};
+use crate::{
+    scanner, storage::devices as dev_store, storage::networks as net_store, AppState,
+};
 
-pub async fn list_networks(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
-    };
+pub async fn list_networks(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let networks = state
+        .db
+        .execute(net_store::list_networks)
+        .await.map_err(ApiError::from)?;
 
-    match net_store::list_networks(&conn).await {
-        Ok(networks) => Json(json!(networks)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e})),
-        )
-            .into_response(),
-    }
+    Ok(Json(json!(networks)))
 }
 
-pub async fn get_topology(State(state): State<AppState>) -> impl IntoResponse {
-    // 1. Grab devices and drop connection immediately
-    let devices = {
-        let conn = match state.db.connect().await {
-            Ok(c) => c,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
-        };
-        match dev_store::list_devices(&conn, false).await {
-            Ok(d) => d,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
-        }
-    };
+pub async fn get_topology(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    // 1. Grab devices
+    let devices = state
+        .db
+        .execute(move |conn| dev_store::list_devices(conn, false))
+        .await.map_err(ApiError::from)?;
 
     let info = scanner::network_identity::get_current_network_info().await;
     let gateway_ip = info.gateway;
 
     // Identify the server's own IP (WADDAN)
-    // In a real scenario, we'd check all local interfaces. 
+    // In a real scenario, we'd check all local interfaces.
     // For now, we'll look for a specific environment variable or fallback to a known pattern.
     let server_ip = std::env::var("SHABAKAT_SERVER_IP").ok();
 
     // Get DNS providers to identify AdGuard nodes
-    let dns_providers: Vec<crate::types::DnsProvider> = crate::storage::providers::list_providers(state.db.clone()).await.unwrap_or_default();
-    let adguard_ips: std::collections::HashSet<String> = dns_providers.into_iter().map(|p| p.ip).collect();
+    let dns_providers: Vec<crate::types::DnsProvider> =
+        crate::storage::providers::list_providers(state.db.clone())
+            .await.map_err(ApiError::from)?;
+    let adguard_ips: std::collections::HashSet<String> =
+        dns_providers.into_iter().map(|p| p.ip).collect();
 
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
@@ -66,7 +59,7 @@ pub async fn get_topology(State(state): State<AppState>) -> impl IntoResponse {
             "isGateway": is_gateway,
             "isServer": is_server,
             "isAdGuard": is_adguard,
-            "isOnline": dev.is_online,
+            "isOnline": dev.is_online(),
             "likelyType": dev.likely_type,
             "vendor": dev.vendor,
         }));
@@ -84,18 +77,18 @@ pub async fn get_topology(State(state): State<AppState>) -> impl IntoResponse {
         }
     }
 
-    Json(json!({
+    Ok(Json(json!({
         "nodes": nodes,
         "edges": edges,
-    })).into_response()
+    })))
 }
 
-pub async fn get_network_info() -> impl IntoResponse {
+pub async fn get_network_info() -> ApiResult<impl IntoResponse> {
     let info = scanner::network_identity::get_current_network_info().await;
-    Json(json!({
+    Ok(Json(json!({
         "ssid":    info.ssid,
         "bssid":   info.bssid,
         "gateway": info.gateway,
         "subnet":  info.subnet,
-    }))
+    })))
 }

@@ -25,6 +25,8 @@ pub struct DiscoveredDevice {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub rssi: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub open_ports: Option<String>,
     pub suggested_names: Option<Vec<String>>,
 }
@@ -116,11 +118,21 @@ pub struct DeviceRecord {
     pub notes: Option<String>,
     pub display_name: Option<String>,
     pub is_online: bool,
+    pub is_ignored: bool,
+    pub rssi: Option<i32>,
     pub custom_icon: Option<String>,
     pub suggested_names: Option<Vec<String>>,
 }
 
 impl DeviceRecord {
+    pub fn is_online(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        (now - self.last_seen) < 900000 // 15 minutes in ms
+    }
+
     pub fn generate_suggested_names(&mut self) {
         let mut suggestions = Vec::new();
         

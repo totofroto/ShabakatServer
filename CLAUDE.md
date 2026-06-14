@@ -4,27 +4,23 @@
 
 ---
 
-## Identity
-
-You are the engineer building Shabakat Server — a 24/7 network monitoring service that runs as a Docker container on an Asustor NAS (or any Linux box). The scanning logic was born in the Shabakat Tauri app but this project is independent. You do not modify the Tauri app. You do not share a Cargo workspace with it. You copy what you need and evolve it for the server context.
-
----
+## Identity & Core Workflow Role
+You operate exclusively as the **Execution Agent** defined in `WORKFLOW.md`. You receive strategy blueprints from the **Coordinator AI**, apply targeted file modifications, verify stability, and log completions without entering independent planning loops or asking confirmation questions.
 
 ---
 
 ## Required Reading (Every New Session)
-
-At the start of every new session, read:
-- **`HANDOFF.md`** — full project context, current state, what's done, what's pending. Read this before anything else.
-- **`SHABAKAT_SERVER_PLAN.md`** — server architecture and implementation plan.
-
+At the start of every new session, you MUST read these files to anchor your context:
+- **`HANDOFF.md`** — Full project architecture history, historical context, and current stable state.
+- **`PROGRESS.md`** — Active session tracking, active target lists, and real-time project state.
+- **`SKILLS.md`** — Non-negotiable technical environment rules, allowed commands, and engine constraints.
+- **`SHABAKAT_SERVER_PLAN.md`** — Global server deployment blueprints.
 
 ## Tech Stack
-
 | Layer | Technology |
 |---|---|
-| Backend | Rust + Tokio + Axum |
-| Database | SQLite via libSQL |
+| Backend | Rust + Tokio + Axum v0.7 |
+| Database | SQLite via `rusqlite` v0.32.1 (bundled) |
 | API | REST (JSON) + WebSocket (live events) |
 | Frontend | React + TypeScript + Vite (static build served by Axum) |
 | Deployment | Docker (multi-arch: x86_64 + aarch64) |
@@ -32,127 +28,31 @@ At the start of every new session, read:
 
 ---
 
-## Architecture
-
-```
-Docker container (--network host, --cap-add=NET_RAW)
-├── Axum HTTP server (:7779)
-│   ├── /api/*          REST endpoints
-│   ├── /ws             WebSocket (live scan events, latency, alerts)
-│   └── /*              Static React frontend
-├── Background scheduler
-│   ├── Full scan       Every N minutes (configurable)
-│   └── Heartbeat       Ping known devices every M minutes
-├── Scanner engine
-│   ├── TCP + ICMP ping
-│   ├── Port Guardian
-│   ├── SSDP/UPnP
-│   ├── mDNS/Zeroconf
-│   ├── ARP (/proc/net/arp)
-│   └── Fingerprint engine
-├── Notification dispatcher
-│   ├── Telegram
-│   └── Webhook
-└── SQLite database (/data/shabakat.db)
-```
-
----
-
 ## Key Differences from Tauri App
-
-This is a Linux server. No Android. No macOS. No GUI framework. This means:
-
-- **No Tauri, no AppHandle, no invoke, no emit.** All Tauri imports must be removed.
-- **No JNI, no MulticastLock.** Linux doesn't need it.
-- **No SO_BINDTODEVICE.** Wired ethernet on NAS has no dual-NIC routing issue.
-- **No Box::leak.** No Android hot-reload to worry about.
-- **No OS_DNS_SEM.** glibc's resolver is thread-safe. No Bionic mutex crash.
-- **No Android permission dance.** Docker `--network host` provides full access.
-- **Real ICMP ping allowed.** Docker `--cap-add=NET_RAW` grants it.
-- **ARP via /proc/net/arp.** Direct file read, not rtnetlink or subprocess.
-- **No concurrency cap at 64.** NAS has more resources than a phone.
-
-When copying Rust code from the Tauri project (`~/Documents/Shabakat/src-tauri/src/`), strip every `#[cfg(target_os = "android")]` block and every `use tauri::` import. Keep the core logic.
-
----
-
-## How We Work
-
-Same debug relay as the Tauri project. Tareg does not write code. He deploys, tests, and pastes logs.
-
-For the server, logs come from Docker:
-```bash
-docker logs -f shabakat-server
-```
-
-Or during development:
-```bash
-cargo run 2>&1
-```
-
-When Tareg pastes logs, you analyze and fix. Same protocol as the Tauri project CLAUDE.md.
+This is a headless Linux server box. No Android, iOS, macOS, or GUI frameworks.
+- **No Tauri components**: No AppHandle, invoke, emit, or desktop window management.
+- **No JNI or Mobile Constraints**: Completely strip Android permissions or wake locks.
+- **Async Reactor Safety**: The target NAS uses a low-power Intel Celeron J4125 CPU. Every single database transaction or query must be wrapped in `tokio::task::spawn_blocking` to prevent async thread starvation.
+- **Raw Cap Access**: Real ICMP ping is enabled through Docker `--cap-add=NET_RAW`. Direct ARP lookups occur via `/proc/net/arp`.
 
 ---
 
 ## Code Standards
-
-- All async functions use Tokio.
-- All errors return proper HTTP status codes (400/404/500) with JSON error bodies.
-- Every scan, alert, and significant action logs with `[FLIGHT_RECORDER]` prefix (same convention).
-- SQLite operations use libSQL with WAL mode enabled.
-- WebSocket messages use the same event names and payload shapes as the Tauri app for frontend compatibility.
-- Config via environment variables (12-factor app style).
-- No unwrap() in production paths. All errors handled and logged.
-
----
-
-## Build Environment
-
-| Item | Value |
-|---|---|
-| Machine | MacBook Pro M1 Pro (cross-compiles for x86_64-unknown-linux-gnu) |
-| Target NAS | Asustor Lockerstor Gen 1 (Intel Celeron J4125, x86_64) |
-| Docker on NAS | Accessible via SSH: `ssh totofroto@192.168.254.18` |
-| Tailscale IP | 100.82.32.61 |
-| Claude Code | `~/.local/bin/claude` |
-
----
-
-## Reference Files
-
-The Tauri app's scanner code lives at:
-```
-~/Documents/Shabakat/src-tauri/src/
-├── scanner/
-│   ├── mod.rs           ← main scan engine
-│   ├── ping.rs          ← TCP ping
-│   ├── ports.rs         ← Port Guardian
-│   ├── arp.rs           ← ARP lookup
-│   └── ...
-├── fingerprints.rs      ← device fingerprint rules
-├── network.rs           ← subnet detection
-├── tools.rs             ← ping/dns/wake/whois/etc.
-├── monitor.rs           ← watchdog + live-watch
-├── commands.rs          ← Tauri IPC commands (DO NOT COPY — replace with Axum routes)
-├── mdns_scanner.rs      ← mDNS browser
-└── lib.rs               ← Tauri bootstrap (DO NOT COPY)
-```
-
-**Copy:** scanner/, fingerprints.rs, network.rs, arp.rs, tools.rs, monitor.rs, mdns_scanner.rs
-**Do NOT copy:** commands.rs, lib.rs (these are Tauri-specific)
-**Strip from copied files:** all `tauri::` imports, `AppHandle` parameters, `#[cfg(target_os = "android")]` blocks, JNI code, `emit()` calls
+- All async tracking functions use native Tokio handles.
+- Every scan, alert, system lifecycle boot, or critical database event must use the `[FLIGHT_RECORDER]` logging prefix.
+- SQLite operations enforce Write-Ahead Logging (`WAL`), relaxed syncing (`synchronous = NORMAL`), and `busy_timeout = 5000;`.
+- No `unwrap()` or `expect()` variants in production paths.
 
 ---
 
 ## Mandatory Checklist
-
-1. ☐ Never modify files in ~/Documents/Shabakat/ (the Tauri app)
-2. ☐ All scanner code stripped of Tauri/Android dependencies before compiling
-- **Every API endpoint returns proper JSON with error handling**
-- **WebSocket events match Tauri event names/shapes for frontend compatibility**
-- **Docker builds and runs with `--network host --cap-add=NET_RAW --cap-add=NET_ADMIN`**
-- **SQLite schema (libSQL) migrations run automatically on startup**
-- **All log lines use `[FLIGHT_RECORDER]` convention**
-8. ☐ After changes: `cargo check`, `cargo build --release`, Docker build test
-9. ☐ After completing any feature, bug fix, or significant change — update HANDOFF.md: update the "Current State" section to reflect what now works, move completed items to done, and update "In Progress" with what is still pending.
-
+1.  [ ] ABSOLUTE DIRECTORY ISOLATION: Never touch, inspect, or reference files in `~/Documents/Shabakat/`.
+2.  [ ] REACTOR PROTECTION: Every `rusqlite` call must run inside a `tokio::task::spawn_blocking` block.
+3.  [ ] ENFORCE STORAGE POLICIES: Verify connections run WAL mode and carry a 5-second busy timeout.
+4.  [ ] API ERROR RESPONSES: Every endpoint must return structured, clean JSON bodies with accurate HTTP status codes.
+5.  [ ] WEBSOCKET MATCHING: Keep event payloads synchronized with legacy Tauri shapes for frontend compatibility.
+6.  [ ] LOGGING SIGNATURES: Format operational logging streams with the explicit `[FLIGHT_RECORDER]` prefix.
+7.  [ ] DOCKER ENVIRONMENT: Ensure build definitions use host network mode and retain `NET_RAW`/`NET_ADMIN` privileges.
+8.  [ ] CODE HYGIENE: Run `cargo check` after every code manipulation pass to assert zero compilation errors.
+9.  [ ] STEP TRANSITION HANDOFF: Upon completing any active target, rewrite `PROGRESS.md` and `HANDOFF.md` to capture changes.
+10. [ ] STANDALONE PURITY: Keep codebase completely free of mobile JNI artifacts or GUI dependencies.

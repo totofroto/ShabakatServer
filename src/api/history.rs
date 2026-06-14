@@ -1,11 +1,11 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use crate::AppState;
+use crate::api::error::{ApiResult, ApiError};
 
 #[derive(Deserialize)]
 pub struct HistoryQuery {
@@ -39,6 +39,7 @@ pub struct ScanHistoryEntry {
     pub ip: String,
     pub is_online: bool,
     pub latency_ms: Option<f64>,
+    pub open_ports: Option<String>,
     pub mac: String,
 }
 
@@ -46,90 +47,77 @@ pub struct ScanHistoryEntry {
 pub async fn get_events(
     State(state): State<AppState>,
     Query(query): Query<HistoryQuery>,
-) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB Connection error: {}", e)).into_response(),
-    };
+) -> ApiResult<impl IntoResponse> {
+    let limit = query.limit;
+    let offset = query.offset;
 
-    // Join with devices table to enrich the history log with hardware identity contexts
-    let sql = "
-        SELECT 
-            e.id, e.event_type, e.device_id, e.timestamp, e.details,
-            d.mac, d.last_ip, d.hostname
-        FROM device_events e
-        LEFT JOIN devices d ON e.device_id = d.id
-        ORDER BY e.timestamp DESC
-        LIMIT ?1 OFFSET ?2";
+    let events: Vec<HistoricalEvent> = state.db.execute(move |conn| {
+        // Join with devices table to enrich the history log with hardware identity contexts
+        let sql = "
+            SELECT 
+                e.id, e.event_type, e.device_id, e.timestamp, e.details,
+                d.mac, d.last_ip, d.hostname
+            FROM device_events e
+            LEFT JOIN devices d ON e.device_id = d.id
+            ORDER BY e.timestamp DESC
+            LIMIT ?1 OFFSET ?2";
 
-    let mut stmt = match conn.prepare(sql).await {
-        Ok(s) => s,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Statement error: {}", e)).into_response(),
-    };
+        let mut stmt = conn.prepare(sql)?;
 
-    let mut rows = match stmt.query(libsql::params![query.limit, query.offset]).await {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Query error: {}", e)).into_response(),
-    };
+        let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+            Ok(HistoricalEvent {
+                id: row.get::<_, i64>(0).unwrap_or(0),
+                event_type: row.get::<_, String>(1).unwrap_or_default(),
+                device_id: row.get::<_, Option<i64>>(2).ok().flatten(),
+                timestamp: row.get::<_, i64>(3).unwrap_or(0),
+                details: row.get::<_, String>(4).unwrap_or_default(),
+                mac: row.get::<_, Option<String>>(5).ok().flatten(),
+                ip: row.get::<_, Option<String>>(6).ok().flatten(),
+                hostname: row.get::<_, Option<String>>(7).ok().flatten(),
+            })
+        })?;
 
-    let mut events = Vec::new();
-    while let Ok(Some(row)) = rows.next().await {
-        events.push(HistoricalEvent {
-            id: row.get(0).unwrap_or(0),
-            event_type: row.get(1).unwrap_or_default(),
-            device_id: row.get(2).ok(),
-            timestamp: row.get(3).unwrap_or(0),
-            details: row.get(4).unwrap_or_default(),
-            mac: row.get(5).ok(),
-            ip: row.get(6).ok(),
-            hostname: row.get(7).ok(),
-        });
-    }
+        Ok::<_, rusqlite::Error>(rows.flatten().collect())
+    }).await.map_err(ApiError::from)?;
 
-    Json(events).into_response()
+    Ok(Json(events))
 }
 
 /// Fetches paginated scan history
 pub async fn get_history(
     State(state): State<AppState>,
     Query(query): Query<HistoryQuery>,
-) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB Connection error: {}", e)).into_response(),
-    };
+) -> ApiResult<impl IntoResponse> {
+    let limit = query.limit;
+    let offset = query.offset;
 
-    let sql = "
-        SELECT 
-            h.scan_id, h.scanned_at, h.ip, h.is_online, h.latency_ms, d.mac
-        FROM scan_history h
-        JOIN devices d ON h.device_id = d.id
-        ORDER BY h.scanned_at DESC
-        LIMIT ?1 OFFSET ?2";
+    let entries: Vec<ScanHistoryEntry> = state.db.execute(move |conn| {
+        let sql = "
+            SELECT
+                h.scan_id, h.scanned_at, h.ip, h.is_online, h.latency_ms, h.open_ports, d.mac
+            FROM scan_history h
+            JOIN devices d ON h.device_id = d.id
+            ORDER BY h.scanned_at DESC
+            LIMIT ?1 OFFSET ?2";
 
-    let mut stmt = match conn.prepare(sql).await {
-        Ok(s) => s,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Statement error: {}", e)).into_response(),
-    };
+        let mut stmt = conn.prepare(sql)?;
 
-    let mut rows = match stmt.query(libsql::params![query.limit, query.offset]).await {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Query error: {}", e)).into_response(),
-    };
+        let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+            Ok(ScanHistoryEntry {
+                scan_id: row.get::<_, String>(0).unwrap_or_default(),
+                scanned_at: row.get::<_, i64>(1).unwrap_or(0),
+                ip: row.get::<_, String>(2).unwrap_or_default(),
+                is_online: row.get::<_, i32>(3).unwrap_or(0) != 0,
+                latency_ms: row.get::<_, Option<f64>>(4).ok().flatten(),
+                open_ports: row.get::<_, Option<String>>(5).ok().flatten(),
+                mac: row.get::<_, String>(6).unwrap_or_default(),
+            })
+        })?;
 
-    let mut entries = Vec::new();
-    while let Ok(Some(row)) = rows.next().await {
-        entries.push(ScanHistoryEntry {
-            scan_id: row.get(0).unwrap_or_default(),
-            scanned_at: row.get(1).unwrap_or(0),
-            ip: row.get(2).unwrap_or_default(),
-            is_online: row.get::<i32>(3).unwrap_or(0) != 0,
-            latency_ms: row.get(4).ok(),
-            mac: row.get(5).unwrap_or_default(),
-        });
-    }
+        Ok::<_, rusqlite::Error>(rows.flatten().collect())
+    }).await.map_err(ApiError::from)?;
 
-    Json(entries).into_response()
+    Ok(Json(entries))
 }
 
 /// Fetches scan history for a specific device by MAC
@@ -137,42 +125,39 @@ pub async fn get_device_history(
     State(state): State<AppState>,
     Path(mac): Path<String>,
     Query(query): Query<HistoryQuery>,
-) -> impl IntoResponse {
-    let conn = match state.db.connect().await {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB Connection error: {}", e)).into_response(),
-    };
+) -> ApiResult<impl IntoResponse> {
+    let limit = query.limit;
+    let offset = query.offset;
+    let normalized = crate::scanner::arp::normalize_mac(&mac);
 
-    let sql = "
-        SELECT 
-            h.scan_id, h.scanned_at, h.ip, h.is_online, h.latency_ms, d.mac
-        FROM scan_history h
-        JOIN devices d ON h.device_id = d.id
-        WHERE d.mac = ?1
-        ORDER BY h.scanned_at DESC
-        LIMIT ?2 OFFSET ?3";
+    let entries: Vec<ScanHistoryEntry> = state.db.execute(move |conn| {
+        let sql = "
+            SELECT
+                h.scan_id, h.scanned_at, h.ip, h.is_online, h.latency_ms, h.open_ports, d.mac
+            FROM scan_history h
+            JOIN devices d ON h.device_id = d.id
+            WHERE d.mac = ?1
+            ORDER BY h.scanned_at DESC
+            LIMIT ?2 OFFSET ?3";
 
-    let mut stmt = match conn.prepare(sql).await {
-        Ok(s) => s,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Statement error: {}", e)).into_response(),
-    };
+        let mut stmt = conn.prepare(sql)?;
 
-    let mut rows = match stmt.query(libsql::params![mac, query.limit, query.offset]).await {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Query error: {}", e)).into_response(),
-    };
+        let rows = stmt.query_map(rusqlite::params![normalized, limit, offset], |row| {
+            Ok(ScanHistoryEntry {
+                scan_id: row.get::<_, String>(0).unwrap_or_default(),
+                scanned_at: row.get::<_, i64>(1).unwrap_or(0),
+                ip: row.get::<_, String>(2).unwrap_or_default(),
+                is_online: row.get::<_, i32>(3).unwrap_or(0) != 0,
+                latency_ms: row.get::<_, Option<f64>>(4).ok().flatten(),
+                open_ports: row.get::<_, Option<String>>(5).ok().flatten(),
+                mac: row.get::<_, String>(6).unwrap_or_default(),
+            })
+        })?;
 
-    let mut entries = Vec::new();
-    while let Ok(Some(row)) = rows.next().await {
-        entries.push(ScanHistoryEntry {
-            scan_id: row.get(0).unwrap_or_default(),
-            scanned_at: row.get(1).unwrap_or(0),
-            ip: row.get(2).unwrap_or_default(),
-            is_online: row.get::<i32>(3).unwrap_or(0) != 0,
-            latency_ms: row.get(4).ok(),
-            mac: row.get(5).unwrap_or_default(),
-        });
-    }
+        Ok::<_, rusqlite::Error>(rows.flatten().collect())
+    }).await.map_err(ApiError::from)?;
 
-    Json(entries).into_response()
+    Ok(Json(entries))
 }
+
+

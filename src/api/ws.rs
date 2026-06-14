@@ -7,13 +7,16 @@ use axum::{
 };
 use tokio::sync::broadcast;
 
-use crate::AppState;
+use crate::{
+    api::error::ApiResult,
+    AppState,
+};
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state.broadcast_tx.clone()))
+) -> ApiResult<impl IntoResponse> {
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state.broadcast_tx.clone())))
 }
 
 async fn handle_socket(mut socket: WebSocket, tx: broadcast::Sender<serde_json::Value>) {

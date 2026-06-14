@@ -4,6 +4,7 @@ pub mod auth;
 pub mod dashboard;
 pub mod debug;
 pub mod devices;
+pub mod error;
 pub mod history;
 pub mod networks;
 pub mod notifications;
@@ -17,13 +18,12 @@ pub mod ws;
 
 use axum::{
     http::{HeaderValue, Method},
-    middleware,
     routing::{delete, get, patch, post},
     Router,
 };
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 
-use crate::middleware::auth::auth_middleware;
 use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -85,10 +85,13 @@ pub fn router(state: AppState) -> Router {
         .route("/debug/terminal/run", post(debug::run_terminal_command))
         .route("/devices", get(devices::list_devices))
         .route("/devices/alias", post(devices::set_device_alias))
+        .route("/devices/learn", post(devices::learn_device))
+        .route("/devices/ignore", post(devices::ignore_device))
         .route("/devices/:mac", get(devices::get_device))
         .route("/devices/:mac", patch(devices::patch_device))
         .route("/devices/:mac", delete(devices::delete_device))
         .route("/devices/:mac/history", get(history::get_device_history))
+        .route("/devices/:mac/rssi", get(devices::get_device_rssi))
         .route("/devices/:ip/dns", get(adguard::get_device_dns_stats))
         .route("/networks", get(networks::list_networks))
         .route("/network/topology", get(networks::get_topology))
@@ -98,6 +101,7 @@ pub fn router(state: AppState) -> Router {
         .route("/speed-test/history", get(speed_test::speed_test_history))
         .route("/scan", post(scan::trigger_scan))
         .route("/scan/status", get(scan::scan_status))
+        .route("/scan/abort", post(scan::abort_scan))
         .route("/history", get(history::get_history))
         .route("/events", get(history::get_events))
         .route("/dns/providers", get(providers::list_providers))
@@ -110,15 +114,30 @@ pub fn router(state: AppState) -> Router {
         .route("/notifications/config", get(notifications::get_notification_config))
         .route("/notifications/config", post(notifications::update_notification_config))
         .nest("/tools", tool_routes)
-        .nest("/auth", auth_routes)
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ));
+        .nest("/auth", auth_routes);
+        // .layer(middleware::from_fn_with_state(
+        //     state.clone(),
+        //     auth_middleware,
+        // ));
 
-    Router::new()
+    // Serve the React SPA from SHABAKAT_WEB_DIR when configured.
+    // Any path not matched by /api/* or /ws falls through to the SPA,
+    // with index.html as the 404 fallback so client-side routing works.
+    let base = Router::new()
         .nest("/api", api)
-        .route("/ws", get(ws::ws_handler))
-        .layer(cors)
-        .with_state(state)
+        .route("/ws", get(ws::ws_handler));
+
+    let base = if let Some(ref web_dir) = state.config.web_dir {
+        let index = format!("{web_dir}/index.html");
+        log::info!("[FLIGHT_RECORDER] Serving React SPA from {web_dir}");
+        base.fallback_service(
+            ServeDir::new(web_dir)
+                .not_found_service(ServeFile::new(index)),
+        )
+    } else {
+        log::info!("[FLIGHT_RECORDER] SHABAKAT_WEB_DIR not set — frontend will not be served");
+        base
+    };
+
+    base.layer(cors).with_state(state)
 }

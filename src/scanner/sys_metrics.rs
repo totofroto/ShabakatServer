@@ -57,8 +57,8 @@ impl SystemCollector {
             // Compute instant sub-second throughput differentials if historical telemetry exists
             if let Some(&(prev_rx, prev_tx)) = self.prev_network_stats.get(&interface_name) {
                 // Handle edge counters wrap-around/reset gracefully
-                let delta_rx = if bytes_rx >= prev_rx { bytes_rx - prev_rx } else { 0 };
-                let delta_tx = if bytes_tx >= prev_tx { bytes_tx - prev_tx } else { 0 };
+                let delta_rx = bytes_rx.saturating_sub(prev_rx);
+                let delta_tx = bytes_tx.saturating_sub(prev_tx);
 
                 current_interfaces.push(InterfaceMetrics {
                     interface: interface_name,

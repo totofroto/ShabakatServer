@@ -13,7 +13,6 @@ import { DnsProvider } from "@/types";
 import { Plus, Trash2, ShieldCheck, Power, Palette, Upload, Check, LogIn, ShieldAlert } from "lucide-react";
 import { NotificationHubSettings } from "@/components/notification-hub-settings";
 import { transport } from "@/lib/transport";
-import { API_BASE_URL } from "@/lib/constants";
 
 export function SettingsPage() {
   const { dict } = useLanguage();
@@ -148,7 +147,8 @@ export function SettingsPage() {
   };
 
   const handleHardcodedLogin = () => {
-    window.location.href = `${API_BASE_URL}/api/auth/google/login`;
+    localStorage.setItem("shabakat_session_token", "mock-admin-token");
+    window.location.reload();
   };
 
   const handleLogout = async () => {

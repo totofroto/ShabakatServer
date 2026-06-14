@@ -102,6 +102,8 @@
   "lastOutage": "آخر انقطاع: {min} دقيقة، قبل {days} أيام",
   "noOutages": "لم يتم تسجيل أي انقطاعات",
   "runSpeedTest": "تشغيل اختبار السرعة",
+  "learnDeviceAction": "تعرف على الجهاز",
+  "ignoreDeviceAction": "تجاهل الجهاز",
   "testing": "جارٍ الاختبار…",
   "scoreBreakdown": "تفصيل الدرجة",
   "tabs": {

@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  AlertCircle,
   ArrowLeft,
   Camera,
   Cast,
@@ -11,18 +12,31 @@ import {
   Loader2,
   Monitor,
   Printer,
+  RotateCcw,
   Router,
   ShieldAlert,
   Smartphone,
   Speaker,
   Terminal,
   Tv,
+  Wifi,
 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { listen, transport, invoke } from "@/lib/transport";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DeviceRow } from "@/hooks/useNetworkScan";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/context/LanguageContext";
+import { useAsyncData } from "@/hooks/useAsyncData";
+import { Button } from "./ui/button";
 
 export type DiscoveredDevice = DeviceRow;
 
@@ -46,6 +60,8 @@ export type DeviceDetailsPanelStrings = {
   deepScanNeedIp: string;
   deepScanPortsProgress: string;
   deepScanOpenPortsTitle: string;
+  learnDeviceAction: string;
+  ignoreDeviceAction: string;
 };
 
 type DeepPortScanProgressPayload = {
@@ -183,6 +199,105 @@ function resolveTypeLabel(device: DeviceRow, fingerprintLikelyType: string | nul
   }
 }
 
+function SignalHistoryChart({ mac }: { mac: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  const { data, error, loading, retry } = useAsyncData(
+    () => invoke<{ timestamp: number; rssi: number }[]>("get_device_rssi", { mac }),
+    [mac]
+  );
+
+  useLayoutEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      if (!entries.length) return;
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width, height });
+    });
+
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const chartData = useMemo(() => {
+    return data?.map((d) => ({ ...d })) ?? [];
+  }, [data]);
+
+  if (loading) {
+    return (
+      <div className="h-32 flex items-center justify-center">
+        <Loader2 className="w-5 h-5 animate-spin text-tertiary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-32 flex flex-col items-center justify-center gap-2">
+        <AlertCircle className="w-5 h-5 text-error" />
+        <span className="text-[12px] text-secondary">Failed to load signal history</span>
+        <Button variant="ghost" size="sm" onClick={retry} className="h-7 text-[11px] gap-1">
+          <RotateCcw className="w-3 h-3" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="h-32 flex items-center justify-center text-tertiary text-[13px] italic text-center px-4">
+        No signal history recorded in the last 24h.
+      </div>
+    );
+  }
+
+  const hasDimensions = dimensions.width > 0 && dimensions.height > 0;
+
+  return (
+    <div ref={containerRef} className="h-32 w-full mt-2">
+      {hasDimensions && (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData}>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="rgba(255,255,255,0.05)"
+              vertical={false}
+            />
+            <XAxis dataKey="timestamp" hide />
+            <YAxis domain={[-100, -30]} hide />
+            <Tooltip
+              content={({ active, payload }) => {
+                if (active && payload && payload.length) {
+                  return (
+                    <div className="bg-popover border border-separator p-2 rounded-lg shadow-xl text-[12px]">
+                      <p className="text-secondary mb-1">
+                        {new Date(payload[0].payload.timestamp).toLocaleTimeString()}
+                      </p>
+                      <p className="font-bold text-accent">{payload[0].value} dBm</p>
+                    </div>
+                  );
+                }
+                return null;
+              }}
+            />
+            <Line
+              type="monotone"
+              dataKey="rssi"
+              stroke="#3b82f6"
+              strokeWidth={2}
+              dot={false}
+              animationDuration={500}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 export function DeviceDetailsPanel({
   device,
   customName,
@@ -190,6 +305,7 @@ export function DeviceDetailsPanel({
   fingerprintLikelyType,
   onSaveCustomName,
   onSaveCustomIcon,
+  onIgnore,
   strings: s,
   showUserMessage,
   onClose,
@@ -200,11 +316,13 @@ export function DeviceDetailsPanel({
   fingerprintLikelyType: string | null;
   onSaveCustomName: (name: string) => void;
   onSaveCustomIcon: (url: string) => void;
+  onIgnore?: () => void;
   strings: DeviceDetailsPanelStrings;
   showUserMessage?: (message: string) => void;
   onClose?: () => void;
 }) {
   const { dict } = useLanguage();
+  console.log("[DeviceDetailsPanel] Render", { device, strings: s, dict });
   const [activeTab, setActiveTab] = useState<"home" | "dns" | "timeline">("home");
   const [isEditing, setIsEditing] = useState(false);
   const [editInput, setEditInput] = useState("");
@@ -213,6 +331,8 @@ export function DeviceDetailsPanel({
   const [deepTotalPorts, setDeepTotalPorts] = useState(0);
   const [deepPortsChecked, setDeepPortsChecked] = useState(0);
   const [deepOpenPorts, setDeepOpenPorts] = useState<number[]>([]);
+  const [isLearning, setIsLearning] = useState(false);
+  const [isIgnoring, setIsIgnoring] = useState(false);
   const [uploadingIcon, setUploadingIcon] = useState(false);
   const iconInputRef = useRef<HTMLInputElement>(null);
   const deepScanUnlistenRef = useRef<(() => void) | null>(null);
@@ -224,24 +344,34 @@ export function DeviceDetailsPanel({
     isOnline: boolean;
     latencyMs: number | null;
   };
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [dnsStats, setDnsStats] = useState<{ total_queries: number; blocked_queries: number } | null>(null);
 
-  useEffect(() => {
-    if (device.mac) {
-      invoke<HistoryItem[]>("get_device_history", { mac: device.mac, limit: 10 })
-        .then(setHistory)
-        .catch(console.error);
-    }
-  }, [device.mac]);
+  const {
+    data: history,
+    error: historyError,
+    loading: historyLoading,
+    retry: historyRetry,
+  } = useAsyncData(
+    () =>
+      device.mac
+        ? invoke<HistoryItem[]>("get_device_history", { mac: device.mac, limit: 10 })
+        : Promise.resolve([]),
+    [device.mac]
+  );
 
-  useEffect(() => {
-    if (device.ip) {
-      invoke<{ total_queries: number; blocked_queries: number }>("get_device_dns_stats", { ip: device.ip })
-        .then(setDnsStats)
-        .catch(() => setDnsStats(null));
-    }
-  }, [device.ip]);
+  const {
+    data: dnsStats,
+    error: dnsError,
+    loading: dnsLoading,
+    retry: dnsRetry,
+  } = useAsyncData(
+    () =>
+      device.ip
+        ? invoke<{ total_queries: number; blocked_queries: number }>("get_device_dns_stats", {
+            ip: device.ip,
+          })
+        : Promise.resolve(null),
+    [device.ip]
+  );
 
   useEffect(() => {
     return () => {
@@ -367,6 +497,82 @@ export function DeviceDetailsPanel({
     }
   };
 
+  const handleLearnDevice = async () => {
+    if (isLearning) return;
+
+    // Validate MAC before sending
+    const mac = device.mac?.trim();
+    if (!mac || mac.toLowerCase() === "unknown" || mac.toLowerCase() === "mac restricted") {
+      notify("Cannot learn a device without a valid MAC address.");
+      return;
+    }
+
+    setIsLearning(true);
+    try {
+      const res = await transport.fetch("/api/devices/learn", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mac_address: device.mac,
+          name: device.name || displayName,
+        }),
+      });
+
+      if (res.ok) {
+        notify("Device learned successfully!");
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        notify(`Failed to learn device: ${errorData.error || res.statusText}`);
+      }
+    } catch (err) {
+      notify(
+        typeof err === "string" ? err : err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setIsLearning(false);
+    }
+  };
+
+  const handleIgnoreDevice = async () => {
+    if (isIgnoring) return;
+
+    const mac = device.mac?.trim();
+    if (!mac || mac.toLowerCase() === "unknown" || mac.toLowerCase() === "mac restricted") {
+      notify("Cannot ignore a device without a valid MAC address.");
+      return;
+    }
+
+    setIsIgnoring(true);
+    try {
+      const res = await transport.fetch("/api/devices/ignore", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mac_address: device.mac,
+        }),
+      });
+
+      if (res.ok) {
+        notify("Device added to ignore list.");
+        onIgnore?.();
+        onClose?.(); // Close the panel and refresh will happen via parent
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        notify(`Failed to ignore device: ${errorData.error || res.statusText}`);
+      }
+    } catch (err) {
+      notify(
+        typeof err === "string" ? err : err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setIsIgnoring(false);
+    }
+  };
+
   const Icon = pickDeviceIcon(device);
   const typeLabel = resolveTypeLabel(device, fingerprintLikelyType);
 
@@ -462,6 +668,29 @@ export function DeviceDetailsPanel({
                   {s.custom}
                 </span>
               ) : null}
+            </div>
+
+            {/* ── SIGNAL HISTORY (RSSI) ── */}
+            <div className="w-full px-4 mb-6">
+              <div className="bg-surface rounded-xl p-4 border border-separator/50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Wifi className="w-4 h-4 text-accent" />
+                    <span className="text-[13px] font-semibold text-secondary uppercase tracking-wider">
+                      Signal History
+                    </span>
+                  </div>
+                  {device.rssi != null && (
+                    <span className={cn(
+                      "text-[14px] font-bold",
+                      device.rssi > -60 ? "text-online" : device.rssi > -80 ? "text-warning" : "text-error"
+                    )}>
+                      {device.rssi} dBm
+                    </span>
+                  )}
+                </div>
+                <SignalHistoryChart mac={device.mac} />
+              </div>
             </div>
 
             {/* ── NETWORK ── */}
@@ -586,6 +815,42 @@ export function DeviceDetailsPanel({
                   </span>
                 ) : (
                   s.runDeepScan
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={isLearning}
+                onClick={() => void handleLearnDevice()}
+                className={cn(
+                  "w-full py-3.5 rounded-xl bg-surface-alt text-primary text-[16px] font-semibold text-center transition-colors",
+                  "hover:bg-surface-hover active:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed",
+                )}
+              >
+                {isLearning ? (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                    {s.learnDeviceAction}
+                  </span>
+                ) : (
+                  s.learnDeviceAction
+                )}
+              </button>
+              <button
+                type="button"
+                disabled={isIgnoring}
+                onClick={() => void handleIgnoreDevice()}
+                className={cn(
+                  "w-full py-3.5 rounded-xl bg-surface-alt text-error text-[16px] font-semibold text-center transition-colors",
+                  "hover:bg-error/10 active:brightness-90 disabled:opacity-50 disabled:cursor-not-allowed",
+                )}
+              >
+                {isIgnoring ? (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                    {s.ignoreDeviceAction}
+                  </span>
+                ) : (
+                  s.ignoreDeviceAction
                 )}
               </button>
             </div>
@@ -728,7 +993,19 @@ export function DeviceDetailsPanel({
             <p className="text-[13px] font-semibold text-secondary uppercase tracking-wider px-4 mb-2">
               Security / DNS Details
             </p>
-            {dnsStats ? (
+            {dnsLoading ? (
+              <div className="py-12 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-tertiary" />
+              </div>
+            ) : dnsError ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-3">
+                <AlertCircle className="w-6 h-6 text-error" />
+                <span className="text-[13px] text-secondary">Failed to load DNS statistics</span>
+                <Button variant="outline" size="sm" onClick={dnsRetry}>
+                  Retry
+                </Button>
+              </div>
+            ) : dnsStats ? (
               <div className="bg-surface rounded-xl overflow-hidden mx-4">
                 <div className="flex justify-between items-center px-4 py-3">
                   <span className="text-[15px] text-primary">Total Queries</span>
@@ -764,7 +1041,19 @@ export function DeviceDetailsPanel({
             <p className="text-[13px] font-semibold text-secondary uppercase tracking-wider px-4 mb-2">
               Timeline Log
             </p>
-            {history.length > 0 ? (
+            {historyLoading ? (
+              <div className="py-12 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-tertiary" />
+              </div>
+            ) : historyError ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-3">
+                <AlertCircle className="w-6 h-6 text-error" />
+                <span className="text-[13px] text-secondary">Failed to load timeline data</span>
+                <Button variant="outline" size="sm" onClick={historyRetry}>
+                  Retry
+                </Button>
+              </div>
+            ) : history && history.length > 0 ? (
               <div className="bg-surface rounded-xl overflow-hidden mx-4">
                 {history.map((h, i) => (
                   <div key={h.scanId || i}>

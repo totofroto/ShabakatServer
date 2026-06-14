@@ -1,4 +1,4 @@
-use libsql::params;
+use rusqlite::params;
 use crate::storage::AppDb;
 
 pub struct MetricEntry {
@@ -15,31 +15,33 @@ pub struct MetricStorage;
 
 impl MetricStorage {
     pub async fn log_heartbeat_batch(db: &AppDb, batch: Vec<MetricEntry>) -> Result<(), String> {
-        let conn = db.connect().await?;
-        conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
+        db.execute(move |conn| {
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
-        for entry in batch {
-            let res = conn.execute(
-                "INSERT INTO scan_history (scan_id, scanned_at, device_id, ip, is_online, latency_ms, open_ports)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    entry.scan_id,
-                    entry.scanned_at,
-                    entry.device_id,
-                    entry.ip,
-                    if entry.is_online { 1 } else { 0 },
-                    entry.latency_ms,
-                    entry.open_ports,
-                ],
-            ).await;
 
-            if let Err(e) = res {
-                let _ = conn.execute("ROLLBACK", ()).await;
-                return Err(format!("failed to insert heartbeat: {}", e));
+            for entry in batch {
+                let res = tx.execute(
+                    "INSERT INTO scan_history (scan_id, scanned_at, device_id, ip, is_online, latency_ms, open_ports)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        entry.scan_id,
+                        entry.scanned_at,
+                        entry.device_id,
+                        entry.ip,
+                        if entry.is_online { 1 } else { 0 },
+                        entry.latency_ms,
+                        entry.open_ports,
+                    ],
+                );
+
+                if let Err(e) = res {
+                    return Err(format!("failed to insert heartbeat: {}", e));
+                }
             }
-        }
 
-        conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
-        Ok(())
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(())
+        }).await
     }
 }
+

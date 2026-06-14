@@ -2,6 +2,7 @@ pub mod arp;
 pub mod deep;
 pub mod digital_fence; // Expose the new passive ambient scanning sentry module
 pub mod fingerprints;
+pub mod registry;
 pub mod network;
 pub mod network_identity;
 pub mod ping;
@@ -61,8 +62,65 @@ impl Drop for ScanGuard {
     }
 }
 
+/// A RAII guard that ensures every scan_started event is matched by a scan_finished or scan_failed event,
+/// even if the task panics or is dropped. This guarantees the frontend's activeScanId is always cleared.
+pub struct ScanLifecycle {
+    pub scan_id: String,
+    broadcast_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
+    finished: bool,
+}
+
+impl ScanLifecycle {
+    pub fn new(scan_id: String, broadcast_tx: tokio::sync::broadcast::Sender<serde_json::Value>) -> Self {
+        let _ = broadcast_tx.send(serde_json::json!({
+            "event": "scan_started",
+            "data": { "scanId": &scan_id }
+        }));
+        Self {
+            scan_id,
+            broadcast_tx,
+            finished: false,
+        }
+    }
+
+    pub fn finish(mut self, mut data: serde_json::Value) {
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("scanId".to_string(), serde_json::Value::String(self.scan_id.clone()));
+        }
+        let _ = self.broadcast_tx.send(serde_json::json!({
+            "event": "scan_finished",
+            "data": data
+        }));
+        self.finished = true;
+    }
+
+    pub fn fail(mut self, error: String) {
+        let _ = self.broadcast_tx.send(serde_json::json!({
+            "event": "scan_failed",
+            "data": { "scanId": &self.scan_id, "error": error }
+        }));
+        self.finished = true;
+    }
+}
+
+impl Drop for ScanLifecycle {
+    fn drop(&mut self) {
+        if !self.finished {
+            warn!("[SCAN] ScanLifecycle dropped without explicit finish/fail for scan_id={}", self.scan_id);
+            let _ = self.broadcast_tx.send(serde_json::json!({
+                "event": "scan_failed",
+                "data": { "scanId": &self.scan_id, "error": "Scan task terminated unexpectedly" }
+            }));
+        }
+    }
+}
+
 pub fn is_scan_active() -> bool {
     SCAN_ACTIVE.load(Ordering::Acquire)
+}
+
+pub fn abort_scan() {
+    SCAN_CANCELLED.store(true, Ordering::Release);
 }
 
 fn scan_cancelled() -> bool {
@@ -431,6 +489,11 @@ fn infer_device_type(
     if lowered_hostname.contains("iphone")
         || lowered_hostname.contains("ipad")
         || lowered_hostname.contains("watch")
+        || lowered_hostname.contains("phone")
+        || lowered_hostname.contains("mobile")
+        || lowered_hostname.contains("android")
+        || lowered_hostname.contains("galaxy")
+        || lowered_hostname.contains("pixel")
     {
         return "phone".to_string();
     }
@@ -441,6 +504,30 @@ fn infer_device_type(
         || lowered_hostname.contains("pc")
     {
         return "laptop".to_string();
+    }
+
+    if lowered_vendor.contains("samsung")
+    {
+        if lowered_hostname.contains("sm-") || lowered_hostname.contains("gt-") || lowered_hostname.contains("galaxy") {
+            return "phone".to_string();
+        }
+        if lowered_hostname.contains("tv") || lowered_hostname.contains("tizen") {
+            return "tv".to_string();
+        }
+        // Fallback for Samsung: if we don't know, and it's not obviously a TV, 
+        // it's often a phone in home networks.
+        if !lowered_hostname.contains("tv") {
+             return "phone".to_string();
+        }
+    }
+
+    if (lowered_vendor.contains("apple") || lowered_vendor.contains("google"))
+        && !lowered_hostname.contains("tv")
+        && !lowered_hostname.contains("cast")
+    {
+        // For Apple/Google, if it's not a TV/Cast, it's often a phone/laptop.
+        // We already checked for laptop keywords above.
+        return "phone".to_string();
     }
 
     if lowered_vendor.contains("printer") {
@@ -1611,7 +1698,9 @@ fn mdns_stub_device(ip: &str, info: &MdnsHostInfo) -> Option<DiscoveredDevice> {
         hostname: None,
         ssdp_server: None,
         latency_ms: None,
+        rssi: None,
         open_ports: None,
+
         suggested_names: None,
     })
 }
@@ -1784,6 +1873,7 @@ async fn probe_host(
                 hostname: None,
                 ssdp_server: None,
                 latency_ms: Some(1.0),
+                rssi: None,
                 open_ports: None,
                 suggested_names: None,
             },
@@ -1855,6 +1945,9 @@ async fn probe_host(
     }
 
     let is_randomized = is_randomized_mac(&mac);
+
+    // Simulate RSSI for wireless devices (mock)
+    let rssi = Some(-30 - (rand::random::<u8>() % 60) as i32);
 
     // Skip aggressive probes if matched via registry
     let mut effective_open_ports: Vec<u16> = tcp_ports;
@@ -2016,6 +2109,7 @@ async fn probe_host(
             hostname: api_hostname,
             ssdp_server: http_server_banner,
             latency_ms: Some(latency_ms),
+            rssi,
             open_ports: open_ports_str,
             suggested_names: None,
         },
@@ -2583,6 +2677,7 @@ async fn scan_local_network_inner(
                     hostname: None,
                     ssdp_server: None,
                     latency_ms: Some(1.0),
+                    rssi: None,
                     open_ports: None,
                     suggested_names: None,
                 };
