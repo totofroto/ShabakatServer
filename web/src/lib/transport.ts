@@ -374,7 +374,7 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
 
   // New-device events (Alerts page)
   if (command === "get_new_device_events") {
-    const res = await browserRequest<any[]>("/api/events");
+    const res = await browserRequest<any[]>("/api/alerts");
     if ((res as any).error) throw new Error((res as any).error);
 
     type RawEvent = {

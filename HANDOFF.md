@@ -85,12 +85,18 @@ status: active
 - **cargo audit:** rsa 0.9.10 Marvin Attack (via jsonwebtoken) — no fix available. Auth middleware is currently commented out. Documented.
 
 ### 10) Coordinator Decision Batch *(June 15, 2026)*
-- **D1 — Speed Test SEVERED:** `/api/speed-test/run` (POST) route commented out in `src/api/mod.rs`. The `speed_test` module declaration is also commented out. Reason: saturates the Celeron J4125 uplink and breaks passive mDNS/telemetry accuracy. Source file `src/api/speed_test.rs` preserved for reference. Do NOT re-enable without explicit coordinator approval.
+- **D1 — Speed Test SEVERED:** *(Superseded by Phase A)*. Speed Test has been restored via Cloudflare 5MB payload sampling to avoid uplink saturation.
 - **D2 — build-apkg.sh DELETED:** App Central deployments officially out of scope. Docker + host networking on the NAS is the canonical deployment strategy. File is gone.
 - **D3 — cargo update EXECUTED:** 42 packages updated. Verified: `cargo check` → 0 errors; `cargo test` → 78/78 passed; `cargo clippy --all-targets -- -D warnings` → 0 warnings. No transitive async/rusqlite breakages.
 - **D4 — RSA Marvin Attack ACCEPTED LOCAL RISK:** RUSTSEC-2023-0071 (`rsa 0.9.10` timing side-channel, severity 5.9 medium, via `jsonwebtoken`). No upstream fix. `[FLIGHT_RECORDER]` entry added to `QA_LOG.md`. Server operates behind NAT perimeter only — no public TLS termination, no external RSA exposure. Do NOT patch without new coordinator decision.
 - **D5 — Auth Middleware RE-ENABLED:** `axum::middleware::from_fn_with_state` wired back into `src/api/mod.rs`. All `/api/*` routes are now protected. `/api/health` exempt (outer router). `SHABAKAT_DISABLE_AUTH=true` available for local dev bypass.
 - **D6 — Frontend WS Protocol PATCHED:** `useNetworkScan.ts` `scan_finished` handler now fires `GET /api/devices` instead of reading a `devices` array from the WS payload (which no longer exists). `transport.ts` `ScanFinishedData` type updated (field removed). Browser-mode resolver changed to resolve with empty array and delegate reconciliation to the hook's `GET /api/devices` fetch. Fallback to in-memory accumulation if the fetch fails.
+
+### 11) Phase A: Speed Test Subsystem *(June 22, 2026)*
+- **Endpoints:** Functional `POST /api/speed-test/run` execution loop (Cloudflare 5MB payload sampling) and upgraded `GET /api/speed-test/history` endpoint returning the latest 10 database records.
+
+### 12) Phase B: Alerts Acknowledgment System *(June 22, 2026)*
+- **Architecture:** Transitioned from client-side array filtering to a dedicated `GET /api/alerts` endpoint running an efficient SQLite `JOIN` targeting `d.acknowledged = 0`.
 
 ---
 

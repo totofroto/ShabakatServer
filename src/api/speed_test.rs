@@ -44,7 +44,7 @@ pub async fn speed_test_history(State(state): State<AppState>) -> ApiResult<impl
             "SELECT id, tested_at, download_mbps, upload_mbps, ping_ms
              FROM speed_tests
              ORDER BY tested_at DESC
-             LIMIT 30"
+             LIMIT 10"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map([], |row| {
@@ -86,7 +86,7 @@ async fn do_speed_test() -> Result<(f64, f64, f64), String> {
     log::info!("[SPEED_TEST_TRACE] Phase 2: Launching HTTP download check");
     let t1 = Instant::now();
     let resp = client
-        .get("https://speed.cloudflare.com/__down?bytes=10000000")
+        .get("https://speed.cloudflare.com/__down?bytes=5000000")
         .send()
         .await
         .map_err(|e| format!("download request: {e}"))?;

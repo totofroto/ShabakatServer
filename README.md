@@ -15,5 +15,14 @@ The frontend dashboard features several stability and performance enhancements:
 - **Null-Safe Sorting:** Device lists and tables implement robust null-safe sorting using `.localeCompare` with null-coalescing fallbacks. This prevents rendering crashes during POST-scan reconciliation.
 - **WebSocket Streaming:** Real-time state streaming includes deduplication mechanisms to ensure efficient UI updates without overwhelming the React rendering cycle.
 
+## Recent Feature Updates
+
+### Phase A: Speed Test Subsystem
+- **Execution Loop:** Functional `POST /api/speed-test/run` execution loop utilizing Cloudflare 5MB payload sampling.
+- **History:** Upgraded `GET /api/speed-test/history` endpoint returning the latest 10 database records.
+
+### Phase B: Alerts Acknowledgment System
+- **Optimized Backend Architecture:** Transitioned from client-side array filtering to a dedicated `GET /api/alerts` endpoint running an efficient SQLite `JOIN` targeting `d.acknowledged = 0`.
+
 ## Deployment
 Refer to `docker-compose.yml` for the standard deployment configuration. Remember to ensure `network_mode: "host"` is active when deploying to your NAS or physical host.

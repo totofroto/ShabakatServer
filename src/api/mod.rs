@@ -1,4 +1,5 @@
 pub mod adguard;
+pub mod alerts;
 pub mod assets;
 pub mod auth;
 pub mod dashboard;
@@ -12,7 +13,7 @@ pub mod outages;
 pub mod providers;
 pub mod scan;
 pub mod settings;
-// pub mod speed_test; // DISABLED by Coordinator (2026-06-15): uplink saturation risk on Celeron J4125 — DO NOT RE-ENABLE without explicit coordinator approval.
+pub mod speed_test;
 pub mod tools;
 pub mod ws;
 
@@ -94,10 +95,9 @@ pub fn router(state: AppState) -> Router {
         .route("/network/topology", get(networks::get_topology))
         .route("/network-info", get(networks::get_network_info))
         .route("/outages", get(outages::list_outages))
-        // DISABLED by Coordinator (2026-06-15): /speed-test/run saturates Celeron J4125 uplink → breaks passive mDNS/telemetry accuracy.
-        // .route("/speed-test/run", post(speed_test::run_speed_test))
-        // .route("/speed-test/history", get(speed_test::speed_test_history))
-        .route("/speed-test/history", get(|| async { axum::Json(Vec::<()>::new()) }))
+        .route("/alerts", get(alerts::get_alerts))
+        .route("/speed-test/run", post(speed_test::run_speed_test))
+        .route("/speed-test/history", get(speed_test::speed_test_history))
         .route("/scan", post(scan::trigger_scan))
         .route("/scan/status", get(scan::scan_status))
         .route("/scan/abort", post(scan::abort_scan))

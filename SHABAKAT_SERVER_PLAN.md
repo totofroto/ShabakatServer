@@ -417,6 +417,15 @@ One POST to the URL with the alert payload. Works with any notification service.
 3. README with setup guide
 4. Push to GitHub Container Registry
 
+### Phase A: Speed Test Subsystem (100% Complete)
+1. Re-enabled `speed_test` module.
+2. Functional `POST /api/speed-test/run` execution loop utilizing Cloudflare 5MB payload sampling.
+3. Upgraded `GET /api/speed-test/history` endpoint returning the latest 10 database records.
+
+### Phase B: Alerts Acknowledgment System (100% Complete)
+1. Optimized backend architecture.
+2. Transitioned from client-side array filtering to a dedicated `GET /api/alerts` endpoint running an efficient SQLite `JOIN` targeting `d.acknowledged = 0`.
+
 ---
 
 ## Claude Code Project Setup
