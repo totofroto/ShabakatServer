@@ -13,7 +13,7 @@ The User can safely copy and execute the following commands when explicitly inst
 - **Testing Loop**: `curl http://localhost:7779/api/health`
 
 ## 3. Code Style & Safety Standards
-- All database access operations MUST be wrapped inside `tokio::task::spawn_blocking` to protect the Celeron CPU from reactor thread starvation.
+- All database access operations MUST use `deadpool-sqlite` and be wrapped inside `tokio::task::spawn_blocking` to protect the Celeron CPU from reactor thread starvation. This is the standard pattern for all future database interactions.
 - All logs related to system actions, alerts, or processing stages must use the `[FLIGHT_RECORDER]` prefix.
 - No `unwrap()` statements are allowed on production code execution paths.
 

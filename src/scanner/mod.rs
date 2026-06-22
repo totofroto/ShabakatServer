@@ -230,7 +230,7 @@ fn ssdp_name_cache() -> &'static Mutex<HashMap<String, String>> {
 }
 
 fn merge_persistent_mdns_cache(into: &mut HashMap<String, MdnsHostInfo>) {
-    let cache = mdns_cache().lock().unwrap();
+    let cache = mdns_cache().lock().unwrap_or_else(|p| p.into_inner());
     for (ip, cached) in cache.iter() {
         let entry = into.entry(ip.clone()).or_default();
         for s in &cached.services {
@@ -247,7 +247,7 @@ fn merge_persistent_mdns_cache(into: &mut HashMap<String, MdnsHostInfo>) {
 }
 
 fn persist_mdns_discovery(ip: &str, hostname: &str, tag: &str) {
-    let mut c = mdns_cache().lock().unwrap();
+    let mut c = mdns_cache().lock().unwrap_or_else(|p| p.into_inner());
     merge_mdns_record(&mut c, ip.to_string(), hostname, tag);
 }
 
@@ -257,11 +257,30 @@ const SCAN_LOCAL_NETWORK_TIMEOUT: Duration = Duration::from_secs(90);
 
 const PTR_QUERY_CONCURRENCY: usize = 32;
 
-const HOTSPOT_IFACE_FRAGMENTS: &[&str] = &["swlan", "ap", "wlan", "tether"];
+// Fix A — Interface selection for wired NAS / bridge environments.
+//
+// The original list only matched Wi-Fi / hotspot fragment names ("wlan", "ap",
+// etc.).  On the Asustor J4125, all ports are bridged into `br0`; none of those
+// fragments appear, so the scanner always fell through to the UDP-trick.
+//
+// New design: accept interfaces whose names *start with* a preferred prefix AND
+// do not contain a virtual/VPN/hotspot exclusion fragment.
+//
+//   PREFERRED  — real physical or bridge interfaces
+//   EXCLUDED   — Docker virtual, VPN tunnels, hotspot tethering
+const PREFERRED_IFACE_PREFIXES: &[&str] = &["eth", "br", "en", "wlan", "wlp", "ens", "enp", "eno"];
+const EXCLUDED_IFACE_FRAGMENTS: &[&str] = &["docker", "veth", "tun", "tap", "swlan", "tether", "dummy", "virbr"];
 
-fn is_hotspot_iface(name: &str) -> bool {
+/// Returns `true` if the interface should be considered for LAN scanning.
+///
+/// Accepts any interface whose name starts with a known physical/bridge prefix
+/// and does not contain a virtual-network exclusion fragment.  Loopback (`lo`)
+/// is implicitly rejected because its IP is filtered later.
+fn is_scannable_iface(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    HOTSPOT_IFACE_FRAGMENTS.iter().any(|f| lower.contains(f))
+    let preferred = PREFERRED_IFACE_PREFIXES.iter().any(|p| lower.starts_with(p));
+    let excluded  = EXCLUDED_IFACE_FRAGMENTS.iter().any(|f| lower.contains(f));
+    preferred && !excluded
 }
 
 pub fn get_best_local_ip() -> Option<Ipv4Addr> {
@@ -274,8 +293,9 @@ fn netmask_to_prefix(netmask: Ipv4Addr) -> u8 {
 
 pub fn get_best_local_network() -> Option<(Ipv4Addr, u8)> {
     if let Ok(ifaces) = get_if_addrs::get_if_addrs() {
+        // Fix A — use is_scannable_iface which accepts br0, eth0, en0, etc.
         for iface in &ifaces {
-            if !is_hotspot_iface(&iface.name) {
+            if !is_scannable_iface(&iface.name) {
                 continue;
             }
             if let get_if_addrs::IfAddr::V4(ref v4) = iface.addr {
@@ -305,19 +325,26 @@ pub fn get_best_local_network() -> Option<(Ipv4Addr, u8)> {
                 }
             }
         }
+        // If no scannable interface was found, log which interfaces were seen for diagnostics.
+        let names: Vec<&str> = ifaces.iter().map(|i| i.name.as_str()).collect();
+        warn!("scan: no scannable interface found among {:?} — falling through to UDP trick", names);
     }
 
+    // UDP-trick fallback: derive local IP by routing toward 8.8.8.8.
+    // No actual traffic is sent; the kernel fills in the source address.
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
     let local = socket.local_addr().ok()?;
     match local.ip() {
         IpAddr::V4(v4) if !v4.is_unspecified() && !v4.is_loopback() => {
-            let prefix = 24;
+            // Prefix is unknown here; use /24 as a conservative default.
+            // Operators on non-/24 subnets should set SHABAKAT_NETWORK_SUBNET.
             info!(
-                "scan: UDP-trick fallback → {} (no netmask available, using default /24)",
+                "scan: UDP-trick fallback → {} (netmask unavailable — assumed /24; \
+                 set SHABAKAT_NETWORK_SUBNET env var to override)",
                 v4
             );
-            Some((v4, prefix))
+            Some((v4, 24))
         }
         _ => None,
     }
@@ -685,7 +712,7 @@ fn reverse_hostname_field(
 }
 
 fn reverse_dns_name_for_ip(ip: &str) -> Option<String> {
-    rdns_cache().lock().unwrap().get(ip).cloned().flatten()
+    rdns_cache().lock().unwrap_or_else(|p| p.into_inner()).get(ip).cloned().flatten()
 }
 
 fn build_ptr_query(ip: Ipv4Addr) -> Vec<u8> {
@@ -791,7 +818,7 @@ fn parse_dns_ptr_response(buf: &[u8]) -> Option<String> {
 }
 
 async fn get_ptr_name(ip: &str, dns_server: Ipv4Addr) -> Option<String> {
-    if let Some(cached) = rdns_cache().lock().unwrap().get(ip).cloned() {
+    if let Some(cached) = rdns_cache().lock().unwrap_or_else(|p| p.into_inner()).get(ip).cloned() {
         return cached;
     }
 
@@ -1271,7 +1298,7 @@ async fn run_identity_fetches(
     }
 
     for ip in all_ips {
-        if ssdp_name_cache().lock().unwrap().contains_key(&ip) {
+        if ssdp_name_cache().lock().unwrap_or_else(|p| p.into_inner()).contains_key(&ip) {
             continue;
         }
         let tx1 = tx.clone();
@@ -1452,7 +1479,7 @@ fn ssdp_friendly_device_title(server: &str) -> Option<String> {
 
 fn apply_ssdp_fingerprint(d: &mut DiscoveredDevice, ssdp: &HashMap<String, String>) {
     {
-        let cache = ssdp_name_cache().lock().unwrap();
+        let cache = ssdp_name_cache().lock().unwrap_or_else(|p| p.into_inner());
         if let Some(friendly) = cache.get(&d.ip) {
             if !friendly.trim().is_empty() && d.mdns_hostname.is_none() {
                 let n = d.name.trim();
@@ -1584,7 +1611,7 @@ fn discover_mdns_background_thread(
                         let ip = scoped.to_ip_addr();
                         if let IpAddr::V4(v4) = ip {
                             let ip_s = v4.to_string();
-                            let mut g = state.lock().unwrap();
+                            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
                             let before = g.mdns.get(&ip_s).cloned();
                             merge_mdns_record(&mut g.mdns, ip_s.clone(), &host, tag);
                             let human_host = humanize_mdns_hostname(&host);
@@ -1769,7 +1796,7 @@ fn emit_scan_progress(
     state: &Arc<Mutex<ScanProgressState>>,
 ) {
     let snapshot = {
-        let g = state.lock().unwrap();
+        let g = state.lock().unwrap_or_else(|p| p.into_inner());
         build_scan_payload(&g)
     };
     let payload = ScanNetworkPayload {
@@ -1797,7 +1824,7 @@ async fn probe_host(
     let mac = mac_opt.clone().unwrap_or_else(|| "Unknown".to_string());
 
     let mdns_info = {
-        let g = state.lock().unwrap();
+        let g = state.lock().unwrap_or_else(|p| p.into_inner());
         g.mdns.get(&ip_string).cloned()
     };
     let mdns_hostname_cached = mdns_info.as_ref().and_then(|m| m.hostname.clone());
@@ -1881,7 +1908,13 @@ async fn probe_host(
         ));
     }
 
-    let probe = probe_result.unwrap();
+    let probe = match probe_result {
+        Some(p) => p,
+        None => {
+            log::warn!("[SCAN] Skipping device at {} due to missing probe result", ip_string);
+            return None;
+        }
+    };
     let latency_ms = probe.latency_ms;
     let tcp_ports = probe.tcp_ports;
 
@@ -1909,7 +1942,7 @@ async fn probe_host(
     log::info!("[SCAN] Host {} [{}] vendor={}", ip_string, mac, vendor_name_oui);
 
     let (mdns_hostname_opt, mdns_primary_opt, mdns_services_for_infer) = {
-        let g = state.lock().unwrap();
+        let g = state.lock().unwrap_or_else(|p| p.into_inner());
         let mdns_opt = g.mdns.get(&ip_string);
         (
             mdns_opt.and_then(|m| m.hostname.clone()),
@@ -2208,7 +2241,7 @@ async fn run_with_guard(
                 SCAN_LOCAL_NETWORK_TIMEOUT
             );
             let (devices, average_latency_ms, scanned_hosts) = {
-                let g = state_for_timeout.lock().unwrap();
+                let g = state_for_timeout.lock().unwrap_or_else(|p| p.into_inner());
                 build_scan_payload(&g)
             };
             Ok(ScanNetworkResult {
@@ -2221,7 +2254,7 @@ async fn run_with_guard(
 
     if let Ok(ref result) = outcome {
         if let Some(ref sd) = shared_devices {
-            let mut d_lock = sd.lock().unwrap();
+            let mut d_lock = sd.lock().unwrap_or_else(|p| p.into_inner());
             *d_lock = result.devices.clone();
             info!(
                 "[SCAN] Shared App State explicitly updated with {} devices.",
@@ -2443,7 +2476,7 @@ async fn scan_local_network_inner(
         .filter(|ip| *ip != interface_ip)
         .collect();
     {
-        let mut g = state.lock().unwrap();
+        let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
         g.total_hosts = scan_hosts.len();
         g.scanned_hosts = 0;
     }
@@ -2460,7 +2493,7 @@ async fn scan_local_network_inner(
     let (mdns_notify_tx, mut mdns_notify_rx) = mpsc::channel::<()>(mdns_channel_cap);
 
     {
-        let mut g = state.lock().unwrap();
+        let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
         merge_persistent_mdns_cache(&mut g.mdns);
     }
 
@@ -2581,7 +2614,7 @@ async fn scan_local_network_inner(
                         let discovered_device = dev.clone();
 
                         let scanned_hosts = {
-                            let mut g = state.lock().unwrap();
+                            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
                             g.scanned_hosts = g.scanned_hosts.saturating_add(1);
                             g.ping.insert(ip, (dev, lat));
                             g.scanned_hosts
@@ -2600,7 +2633,7 @@ async fn scan_local_network_inner(
                     }
                     Some(None) => {
                         let scanned_hosts = {
-                            let mut g = state.lock().unwrap();
+                            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
                             g.scanned_hosts = g.scanned_hosts.saturating_add(1);
                             g.scanned_hosts
                         };
@@ -2640,7 +2673,7 @@ async fn scan_local_network_inner(
         if !arp_neighbors.is_empty() {
             let self_ip = interface_ip;
             let subnet_cidr = local_network.cidr;
-            let mut g = state.lock().unwrap();
+            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
 
             for (ip, mac) in arp_neighbors {
                 if ip == self_ip || !subnet_cidr.contains(&ip) {
@@ -2703,7 +2736,7 @@ async fn scan_local_network_inner(
     let o = interface_ip.octets();
     let dns_server = Ipv4Addr::new(o[0], o[1], o[2], 1);
 
-    let all_active_ips: Vec<String> = state.lock().unwrap().ping.keys().cloned().collect();
+    let all_active_ips: Vec<String> = state.lock().unwrap_or_else(|p| p.into_inner()).ping.keys().cloned().collect();
     let ptr_handle = tokio::spawn(async move {
         stream::iter(all_active_ips)
             .map(|ip| async move {
@@ -2719,7 +2752,7 @@ async fn scan_local_network_inner(
     // ── NetBIOS pass ──────────────────────────────────────────────────────────
     {
         let unnamed_ips: Vec<String> = {
-            let g = state.lock().unwrap();
+            let g = state.lock().unwrap_or_else(|p| p.into_inner());
             g.ping
                 .iter()
                 .filter(|(ip, (dev, _))| {
@@ -2736,7 +2769,7 @@ async fn scan_local_network_inner(
             .collect()
             .await;
 
-        let mut g = state.lock().unwrap();
+        let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
         for (ip, name) in netbios_results {
             if let Some((dev, _)) = g.ping.get_mut(&ip) {
                 dev.name = name;
@@ -2748,7 +2781,7 @@ async fn scan_local_network_inner(
     match ssdp_handle.await {
         Ok((server_map, location_map)) => {
             let all_ips: Vec<String> = {
-                let mut g = state.lock().unwrap();
+                let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
                 g.ssdp = server_map;
                 g.ping.keys().cloned().collect()
             };
@@ -2761,7 +2794,7 @@ async fn scan_local_network_inner(
 
     // ── Apply PTR results ─────────────────────────────────────────────────────
     if let Ok(ptr_results) = ptr_handle.await {
-        let mut g = state.lock().unwrap();
+        let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
         for (ip, name) in ptr_results {
             if let Some((dev, _)) = g.ping.get_mut(&ip) {
                 if dev.mdns_hostname.is_none() && is_generic_hostname(&dev.name, &ip) {
@@ -2779,7 +2812,7 @@ async fn scan_local_network_inner(
     // ── Apply TR-064 router data ──────────────────────────────────────────────
     if let Ok(router_map) = router_handle.await {
         if !router_map.is_empty() {
-            let mut g = state.lock().unwrap();
+            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
             for (ip, (mac, hostname)) in router_map {
                 if let Some((dev, _)) = g.ping.get_mut(&ip) {
                     if (dev.mac == "Unknown" || dev.mac == "MAC Restricted") && !mac.is_empty() {
@@ -2809,7 +2842,7 @@ async fn scan_local_network_inner(
     {
         let arp_table: HashMap<Ipv4Addr, String> = arp::parse_proc_arp().into_iter().collect();
         if !arp_table.is_empty() {
-            let mut g = state.lock().unwrap();
+            let mut g = state.lock().unwrap_or_else(|p| p.into_inner());
             for (ip_str, (dev, _)) in g.ping.iter_mut() {
                 if dev.mac != "Unknown" && dev.mac != "MAC Restricted" {
                     continue;
@@ -2833,13 +2866,13 @@ async fn scan_local_network_inner(
     }
 
     let (only_devices, average_latency_ms, scanned_hosts) = {
-        let g = state.lock().unwrap();
+        let g = state.lock().unwrap_or_else(|p| p.into_inner());
         build_scan_payload(&g)
     };
     debug!("[SCAN_DEBUG] Discovery phase concluded. Total raw objects found: {}", only_devices.len());
 
     if let Some(ref sd) = shared_devices {
-        let mut d_lock = sd.lock().unwrap();
+        let mut d_lock = sd.lock().unwrap_or_else(|p| p.into_inner());
         *d_lock = only_devices.clone();
         info!("[SCAN] Shared App State populated with {} devices.", only_devices.len());
     }

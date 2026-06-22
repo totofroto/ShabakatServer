@@ -78,21 +78,27 @@ pub async fn trigger_scan(
             .await
         {
             Ok(result) => {
+                // [FLIGHT_RECORDER] count log at emit — used to diagnose UI duplication.
+                // During the scan, N device_discovered batches were already emitted.
+                // scan_finished MUST NOT repeat the device array or the frontend will
+                // accumulate 2× entries. Instead, emit only metadata and let the frontend
+                // refresh via GET /api/devices.
                 log::info!(
-                    "[FLIGHT_RECORDER] Scan finished. Found {} device(s). Broadcasting scan_finished immediately.",
+                    "[FLIGHT_RECORDER] scan_finished — emitting metadata for {} device(s) (no device array — frontend must re-fetch /api/devices to avoid duplication)",
                     result.devices.len()
                 );
 
                 // Broadcast scan_finished FIRST — the frontend releases its isScanning
                 // lock here. Never block this broadcast on a DB write; persistence
                 // failures must not freeze the UI.
-                let mut devices_with_suggestions = result.devices.clone();
-                for d in &mut devices_with_suggestions {
-                    d.generate_suggested_names();
-                }
-
+                //
+                // DEVICE-DUPLICATION FIX: The 'devices' key is intentionally OMITTED
+                // from this payload. During the scan, device_discovered batches already
+                // delivered every device to the frontend. Including the full list here
+                // caused frontends that accumulate both streams to show each device 2–6×.
+                // The frontend must call GET /api/devices after scan_finished to get the
+                // authoritative merged list.
                 lifecycle.finish(json!({
-                    "devices": devices_with_suggestions,
                     "deviceCount": result.devices.len(),
                     "scannedHosts": result.scanned_hosts,
                     "averageLatencyMs": result.average_latency_ms,
@@ -182,6 +188,12 @@ pub async fn relay_scan_events(
     while let Some(event) = rx.recv().await {
         let msg = match event {
             ScanEvent::DeviceDiscovered(mut payload) => {
+                // [FLIGHT_RECORDER] log so we can trace batch sizes in logs.
+                log::info!(
+                    "[FLIGHT_RECORDER] device_discovered batch — emitting {} device(s) via WS (batchSeq={})",
+                    payload.devices.len(),
+                    payload.batch_seq,
+                );
                 for d in &mut payload.devices {
                     d.generate_suggested_names();
                 }
@@ -191,6 +203,11 @@ pub async fn relay_scan_events(
                 })
             }
             ScanEvent::Progress(mut payload) => {
+                log::info!(
+                    "[FLIGHT_RECORDER] scan_progress batch — {} device(s) (batchSeq={})",
+                    payload.devices.len(),
+                    payload.batch_seq,
+                );
                 for d in &mut payload.devices {
                     d.generate_suggested_names();
                 }

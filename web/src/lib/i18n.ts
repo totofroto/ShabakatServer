@@ -25,7 +25,7 @@ export function t(lang: AppLang, key: string, dictOverride?: any): string {
   }
 
   // Handle nested keys (e.g. "tabs.home")
-  if (key.includes(".")) {
+  if (key?.includes(".")) {
     const parts = key.split(".");
     let current: any = dict;
     for (const part of parts) {

@@ -510,7 +510,7 @@ export function DashboardPage() {
     const valid = devices.filter(d => d.ip && d.ip.trim() !== "");
     return valid.find(d => d.ip === apiNetwork?.gateway) ||
            valid.find(d => d.likelyType === "Router / Gateway") ||
-           valid.find(d => d.ip.endsWith(".1")) ||
+           valid.find(d => d.ip?.endsWith(".1")) ||
            null;
   }, [devices, apiNetwork]);
   const recentOnlineDevices = useMemo(

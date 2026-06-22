@@ -37,7 +37,6 @@ use log::{error, info, warn};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
 
 use config::Config;
 use notifications::NotificationDispatcher;
@@ -122,16 +121,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         io::Error::other(format!("Cannot create data directory '{}': {e}", data_dir.display()))
     })?;
 
-    // ── 3. Open and migrate the SQLite database ───────────────────────────
+    // ── 3. Open and migrate the SQLite database (Connection Pool) ─────────
     //
-    // ASYNC REACTOR SAFETY: rusqlite is a synchronous C-library.  All
-    // open+migrate work goes onto the dedicated blocking thread pool.
-    let db_path_for_task = db_path.clone();
-    let db: Db = tokio::task::spawn_blocking(move || Db::open(&db_path_for_task))
-        .await
-        .map_err(|join_err| {
-            io::Error::other(format!("[FLIGHT_RECORDER] DB-open spawn_blocking task panicked: {join_err}"))
-        })??;
+    // ASYNC REACTOR SAFETY: `Db::open` is async; it builds the pool and uses
+    // a managed blocking task internally to execute the initial pragmas and
+    // schema migrations.
+    let db: Db = Db::open(&db_path).await.map_err(|e| {
+        io::Error::other(format!("[FLIGHT_RECORDER] DB pool failed to initialise: {e}"))
+    })?;
 
     info!("[FLIGHT_RECORDER] Storage engine online — {}", db_path.display());
 
@@ -258,9 +255,11 @@ fn build_router(state: AppState) -> Router {
 
     health_router
         // Mount the full REST + WebSocket API sub-router (state already applied inside).
+        // CORS is enforced exclusively by the credentialed, origin-allowlisted
+        // CorsLayer built in api::router() — do NOT add a second, permissive
+        // CorsLayer here. A permissive outer layer previously overrode the
+        // restrictive inner policy on every response (Stage 3 audit, Finding 2.1).
         .merge(api::router(state))
-        // CORS — permissive at the outermost layer.
-        .layer(CorsLayer::permissive())
 }
 
 // ── Health handler ────────────────────────────────────────────────────────────

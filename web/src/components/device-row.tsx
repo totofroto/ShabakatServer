@@ -52,9 +52,9 @@ export function getDeviceListPrimaryLine(
   const mdns = device.mdnsHostname?.trim();
   if (mdns) return { primary: mdns, prominent: true };
   const nm = device.name?.trim() ?? "";
-  const nmLower = nm.toLowerCase();
+  const nmLower = nm?.toLowerCase();
   const nameIsGeneric =
-    !nm || nm === device.ip || nmLower === "unknown" || nmLower.startsWith("host ");
+    !nm || nm === device.ip || nmLower === "unknown" || nmLower?.startsWith("host ");
   if (!nameIsGeneric) return { primary: nm, prominent: true };
   if (
     !device.mdnsHostname?.trim() &&
@@ -78,7 +78,7 @@ export function getDeviceListMetaLine(device: DeviceRow): string {
   // Fingerprinting sometimes misclassifies non-gateway hosts as "Router / Gateway".
   // Only the last octet .1 or .2 is a plausible default gateway; everything else
   // that got that label is more accurately shown as "Network Device".
-  if (typePart.includes("Router") || typePart.includes("Gateway")) {
+  if (typePart?.includes("Router") || typePart?.includes("Gateway")) {
     const lastOctet = parseInt(device.ip.split(".").pop() ?? "999", 10);
     if (lastOctet > 2) typePart = "Network Device";
   }
@@ -92,11 +92,11 @@ function ssdpBannerShort(banner: string): string {
   if (upnpIdx !== -1) {
     const tail = t.slice(upnpIdx + 5).trim();
     const tok = tail.split(/\s+/)[1] ?? tail.split(/\s+/)[0] ?? "";
-    if (tok && tok.includes("/") && tok.length <= 32) return `UPnP · ${tok}`;
+    if (tok && tok?.includes("/") && tok.length <= 32) return `UPnP · ${tok}`;
   }
   const tok = t
     .split(/\s+/)
-    .find((p) => p.includes("/") && !/^(Linux|Windows|Unix|Darwin|Android)\//i.test(p));
+    .find((p) => p?.includes("/") && !/^(Linux|Windows|Unix|Darwin|Android)\//i.test(p));
   return tok ? `UPnP · ${tok}` : "UPnP Device";
 }
 
@@ -120,44 +120,44 @@ export function iconFromLikelyType(likelyType: string | null | undefined): Lucid
   const t = likelyType?.toLowerCase() ?? "";
   if (!t) return null;
   // Gaming
-  if (t.includes("playstation")) return Gamepad2;
+  if (t?.includes("playstation")) return Gamepad2;
   // AV / Audio
-  if (t.includes("av receiver") || t.includes("receiver")) return Volume2;
-  if (t.includes("amazon echo") || t.includes("echo dot")) return Mic;
-  if (t.includes("audio dac")) return Headphones;
-  if (t.includes("sonos") || t.includes("audio") || t.includes("speaker")) return Speaker;
+  if (t?.includes("av receiver") || t?.includes("receiver")) return Volume2;
+  if (t?.includes("amazon echo") || t?.includes("echo dot")) return Mic;
+  if (t?.includes("audio dac")) return Headphones;
+  if (t?.includes("sonos") || t?.includes("audio") || t?.includes("speaker")) return Speaker;
   // TV / Streaming / Remotes
-  if (t.includes("chromecast") || t.includes("google tv")) return Cast;
-  if (t.includes("apple tv") || t.includes("homepod") || t.includes("airplay")) return Tv;
-  if (t.includes("tv remote") || t.includes("smart remote")) return Tv;
-  if (t.includes("smart tv") || t.includes("samsung smart") || t.includes("samsung") || t.includes("lg tv") || t.includes("lg smart")) return Tv;
+  if (t?.includes("chromecast") || t?.includes("google tv")) return Cast;
+  if (t?.includes("apple tv") || t?.includes("homepod") || t?.includes("airplay")) return Tv;
+  if (t?.includes("tv remote") || t?.includes("smart remote")) return Tv;
+  if (t?.includes("smart tv") || t?.includes("samsung smart") || t?.includes("samsung") || t?.includes("lg tv") || t?.includes("lg smart")) return Tv;
   // Camera
-  if (t.includes("camera") || t.includes("rtsp")) return Camera;
+  if (t?.includes("camera") || t?.includes("rtsp")) return Camera;
   // Printing
-  if (t.includes("printer") || t.includes("jetdirect") || t.includes("ipp") || t.includes("lpd")) return Printer;
+  if (t?.includes("printer") || t?.includes("jetdirect") || t?.includes("ipp") || t?.includes("lpd")) return Printer;
   // Storage
-  if (t.includes("synology") || t.includes("asustor") || t.includes("nas")) return HardDrive;
+  if (t?.includes("synology") || t?.includes("asustor") || t?.includes("nas")) return HardDrive;
   // Media server
-  if (t.includes("plex")) return Play;
+  if (t?.includes("plex")) return Play;
   // Network infrastructure
-  if (t.includes("ubiquiti") || t.includes("unifi")) return Wifi;
-  if (t.includes("router") || t.includes("gateway")) return Router;
-  if (t.includes("dns") || t.includes("pi-hole")) return Router;
-  if (t.includes("switch")) return GitBranch;
+  if (t?.includes("ubiquiti") || t?.includes("unifi")) return Wifi;
+  if (t?.includes("router") || t?.includes("gateway")) return Router;
+  if (t?.includes("dns") || t?.includes("pi-hole")) return Router;
+  if (t?.includes("switch")) return GitBranch;
   // Computers
-  if (t.includes("linux server") || t.includes("raspberry pi")) return Terminal;
-  if (t.includes("windows pc") || t.includes("windows")) return Monitor;
-  if (t.includes("macbook") || t.includes("mac / apple") || t.includes("apple device")) return Laptop;
-  if (t.includes("iphone") || t.includes("ipad") || t.includes("android")) return Smartphone;
+  if (t?.includes("linux server") || t?.includes("raspberry pi")) return Terminal;
+  if (t?.includes("windows pc") || t?.includes("windows")) return Monitor;
+  if (t?.includes("macbook") || t?.includes("mac / apple") || t?.includes("apple device")) return Laptop;
+  if (t?.includes("iphone") || t?.includes("ipad") || t?.includes("android")) return Smartphone;
   // Smart home
-  if (t.includes("home assistant")) return Home;
-  if (t.includes("smart appliance")) return Refrigerator;
-  if (t.includes("smart light") || t.includes("yeelink")) return Lightbulb;
-  if (t.includes("philips hue")) return Lightbulb;
+  if (t?.includes("home assistant")) return Home;
+  if (t?.includes("smart appliance")) return Refrigerator;
+  if (t?.includes("smart light") || t?.includes("yeelink")) return Lightbulb;
+  if (t?.includes("philips hue")) return Lightbulb;
   // IoT / DB / Web (lower priority)
-  if (t.includes("mqtt") || t.includes("iot hub")) return Cpu;
-  if (t.includes("mysql") || t.includes("postgresql") || t.includes("mongodb")) return Database;
-  if (t.includes("http") || t.includes("https") || t.includes("web interface") || t.includes("admin panel")) return Server;
+  if (t?.includes("mqtt") || t?.includes("iot hub")) return Cpu;
+  if (t?.includes("mysql") || t?.includes("postgresql") || t?.includes("mongodb")) return Database;
+  if (t?.includes("http") || t?.includes("https") || t?.includes("web interface") || t?.includes("admin panel")) return Server;
   return null;
 }
 

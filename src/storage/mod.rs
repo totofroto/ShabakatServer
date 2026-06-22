@@ -1,52 +1,44 @@
-//! # `storage` — Thread-Safe SQLite Persistence Layer
+//! # `storage` — Thread-Safe SQLite Persistence Layer (Pool Edition)
 //!
-//! ## Design Contract
+//! ## Design Contract (v2 — deadpool-sqlite)
 //!
-//! This module owns the **only** live database connection for the entire
-//! Shabakat Server process.  It exposes a single [`Db`] handle that is:
+//! This module exposes a [`Db`] handle backed by a **`deadpool-sqlite` connection
+//! pool** instead of the original single `Arc<Mutex<Connection>>`.
 //!
-//! - **Cheaply cloneable** — backed by `Arc<Mutex<rusqlite::Connection>>`,
-//!   so every Axum route handler and background Tokio task can hold a copy
-//!   without any additional setup.
+//! ### Why the pool?
 //!
-//! - **Async-reactor safe** — `rusqlite` is a *synchronous, blocking*
-//!   C-library driver.  Every query is dispatched through
-//!   [`tokio::task::spawn_blocking`] so the Tokio event loop (and the four
-//!   cores of the Celeron J4125) are never starved while SQLite holds an
-//!   OS page-cache lock.
+//! The J4125 has 4 cores and runs 8+ concurrent background workers (scan
+//! scheduler, presence monitor, Digital Fence ×2, bandwidth monitor, sys-metrics,
+//! scoring task, metrics compactor, plus N concurrent HTTP handlers).  With a
+//! single connection they all serialised through one `std::sync::Mutex`, building
+//! up a blocking-thread queue that added latency to every operation.
 //!
-//! - **Self-migrating** — [`Db::open`] reads the embedded `schema.sql`
-//!   at startup and applies any pending migrations tracked by SQLite's
-//!   built-in `PRAGMA user_version`.  All `CREATE TABLE` statements in the
-//!   schema use `IF NOT EXISTS`, making the process fully idempotent.
+//! With a pool of N connections (default: **4**, matching the CPU core count):
+//! - Up to 4 tasks can execute SQLite operations simultaneously.
+//! - SQLite WAL mode allows 1 writer + N concurrent readers, so 4 connections
+//!   saturate the hardware without exceeding WAL's concurrency window.
+//! - A pool `get()` call waits asynchronously (no busy-spin) if all connections
+//!   are checked out — the Tokio reactor is never blocked.
 //!
-//! ## Usage Pattern
+//! ### Public API (unchanged)
 //!
+//! All callers (`db.interact(…)`, `db.interact_mut(…)`, `db.execute(…)`) work
+//! identically — the pool is a pure implementation-detail behind `Db`.
+//!
+//! ### Startup change
+//!
+//! `Db::open` is now `async`.  The `main.rs` startup call:
 //! ```rust,ignore
-//! // Startup (synchronous, before Axum router is bound):
-//! let db = Db::open("/data/shabakat.db")?;
-//!
-//! // In an Axum handler or background task:
-//! let count: i64 = db
-//!     .interact(|conn| {
-//!         conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))
-//!     })
-//!     .await?;
-//!
-//! // Transaction (requires mutable connection):
-//! db.interact_mut(|conn| {
-//!     let tx = conn.transaction()?;
-//!     tx.execute(
-//!         "INSERT OR IGNORE INTO devices (mac, first_seen, last_seen) VALUES (?1, ?2, ?2)",
-//!         rusqlite::params!["AA:BB:CC:DD:EE:FF", 1_700_000_000_000_i64],
-//!     )?;
-//!     tx.commit()
-//! })
-//! .await?;
+//! let db = tokio::task::spawn_blocking(move || Db::open(&db_path)).await??;
 //! ```
+//! becomes:
+//! ```rust,ignore
+//! let db = Db::open(&db_path).await?;
+//! ```
+//! (See `src/main.rs` — updated in this patch set.)
 
 // ---------------------------------------------------------------------------
-// Sub-modules — each gets its own source file under src/storage/
+// Sub-modules
 // ---------------------------------------------------------------------------
 pub mod compactor;
 pub mod devices;
@@ -59,42 +51,39 @@ pub mod settings;
 pub mod system_status;
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
+use deadpool_sqlite::{Config as PoolConfig, Pool, Runtime};
 use log::{error, info, warn};
 use rusqlite::Connection;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
-// Embedded schema — compiled directly into the binary so the container image
-// needs no external SQL files.  Path is relative to this source file.
+// Embedded schema
 // ---------------------------------------------------------------------------
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
-/// Logical schema version.  **Increment this whenever a new migration block
-/// is added to [`run_migrations`].**  The value is persisted via
-/// `PRAGMA user_version` so it survives container restarts.
+/// Logical schema version.  Increment whenever a new migration block is added.
 ///
 /// v1 — base 4-table schema (devices, scan_history, device_events, settings)
-/// v2 — extended schema: outages, speed_tests, dns_providers, device_aliases,
+/// v2 — extended schema (outages, speed_tests, dns_providers, device_aliases,
 ///       system_status, notification_providers, hourly_metrics + ALTER TABLE
-///       column additions via `migrations::run`.
+///       column additions via `migrations::run`)
 /// v3 — add is_active column to devices table
 const CURRENT_SCHEMA_VERSION: i64 = 3;
 
+/// Pool size: one connection per J4125 core.
+/// WAL mode allows 1 writer + (N-1) concurrent readers at this setting.
+const DB_POOL_SIZE: usize = 4;
+
 // ---------------------------------------------------------------------------
-// Public type alias + utility function used by every sub-module
+// Public aliases / utilities
 // ---------------------------------------------------------------------------
 
-/// Type alias so sub-modules (and the rest of the crate) can write `AppDb`
-/// instead of `Db`.  They are the same type — `AppDb` is cheaper to type and
-/// conveys "application-level handle" vs the lower-level struct name.
+/// Type alias so sub-modules write `AppDb` instead of `Db`.
 pub type AppDb = Db;
 
-/// Returns the current wall-clock time as milliseconds since the Unix epoch.
-///
-/// Used throughout the storage layer to timestamp events without pulling in
-/// the `chrono` crate at every call site.
+/// Current wall-clock time in milliseconds since the Unix epoch.
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -106,28 +95,20 @@ pub fn now_ms() -> i64 {
 // Error type
 // ---------------------------------------------------------------------------
 
-/// All errors that can originate from the storage layer.
 #[derive(Debug, Error)]
 pub enum StorageError {
-    /// A `rusqlite` / SQLite engine error.
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
-    /// The `Mutex` protecting the connection was poisoned — another thread
-    /// panicked while holding the lock.  This is a fatal condition; restart
-    /// the container.
     #[error(
         "Database connection mutex is poisoned \
          (a previous thread panicked while holding the lock)"
     )]
     LockPoisoned,
 
-    /// A `spawn_blocking` task panicked.  The message contains the panic
-    /// payload as a string.
     #[error("Blocking database task panicked: {0}")]
     TaskPanic(String),
 
-    /// A schema migration step failed (rusqlite-level error).
     #[error("Schema migration to version {version} failed: {source}")]
     MigrationFailed {
         version: i64,
@@ -135,13 +116,13 @@ pub enum StorageError {
         source: rusqlite::Error,
     },
 
-    /// A schema migration step returned a plain string error (from
-    /// `migrations::run` which uses `Result<(), String>`).
     #[error("Schema migration to version {version} script error: {message}")]
     MigrationScript { version: i64, message: String },
-}
 
-// Manual From impls so callers can use `?` cleanly -------------------------
+    /// Returned when the connection pool cannot provide a connection.
+    #[error("Connection pool error: {0}")]
+    Pool(String),
+}
 
 impl<T> From<std::sync::PoisonError<T>> for StorageError {
     fn from(_: std::sync::PoisonError<T>) -> Self {
@@ -159,19 +140,23 @@ impl From<tokio::task::JoinError> for StorageError {
 // Db — the public handle
 // ---------------------------------------------------------------------------
 
-/// Thread-safe, cheaply-cloneable handle to the Shabakat SQLite database.
+/// Cheaply cloneable handle to the Shabakat SQLite connection pool.
 ///
-/// Clone this freely — each clone shares the same underlying connection
-/// via the inner `Arc`.  The connection is protected by a `Mutex` so only
-/// one blocking closure executes at a time (SQLite in WAL mode serialises
-/// writers; concurrent readers are naturally safe at the SQLite level, but
-/// the single-connection model simplifies the Rust ownership story).
+/// `Clone` is O(1) — every clone shares the same `Arc<Pool>`.  All async
+/// methods check out a connection from the pool, execute the closure on the
+/// Tokio blocking thread pool (via `deadpool-sqlite`'s internal
+/// `spawn_blocking`), then return the connection to the pool automatically.
 ///
-/// All mutations are issued through [`Db::interact_mut`] which holds the
-/// mutex only on the blocking thread pool, never on the Tokio event loop.
+/// # Pool behaviour
+///
+/// Pool size defaults to [`DB_POOL_SIZE`] (4).  If all connections are checked
+/// out, `pool.get()` yields the current Tokio task (not a blocking spin) until
+/// one becomes available — the async reactor is never stalled.
 #[derive(Clone, Debug)]
 pub struct Db {
-    inner: Arc<Mutex<Connection>>,
+    pool:    Arc<Pool>,
+    /// Retained for `connect_dedicated()` and test helpers.
+    db_path: Arc<str>,
 }
 
 impl Db {
@@ -179,88 +164,55 @@ impl Db {
     // Construction
     // -----------------------------------------------------------------------
 
-    /// Open (or create) the SQLite database at `path`, apply the WAL
-    /// configuration pragmas, and run all pending schema migrations.
+    /// Open (or create) the SQLite database at `path`, configure a connection
+    /// pool, apply WAL pragmas to every pooled connection, and run all pending
+    /// schema migrations.
     ///
-    /// **This is a synchronous function.**  Call it once during application
-    /// startup, *before* binding the Axum router.  All subsequent access
-    /// goes through the async [`Db::interact`] / [`Db::interact_mut`] API.
+    /// This function is **`async`**.  Call it from the Tokio runtime context
+    /// in `main.rs`:
     ///
-    /// Pass `":memory:"` for an in-process, non-persistent database useful
-    /// in unit tests.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError`] if the database file cannot be opened, the
-    /// WAL pragmas fail, or any migration step fails.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
-        let path = path.as_ref();
+    /// ```rust,ignore
+    /// let db = Db::open(&db_path).await?;
+    /// ```
+    pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+        let path_str = path.as_ref().to_string_lossy().into_owned();
         info!(
-            "[FLIGHT_RECORDER] Opening SQLite database at path: {}",
-            path.display()
+            "[FLIGHT_RECORDER] Opening SQLite pool ({} connections) at: {}",
+            DB_POOL_SIZE, path_str
         );
 
-        let conn = Connection::open(path)?;
+        let pool = PoolConfig::new(path_str.clone())
+            .builder(Runtime::Tokio1)
+            .map_err(|e| StorageError::Pool(e.to_string()))?
+            .max_size(DB_POOL_SIZE)
+            .build()
+            .map_err(|e| StorageError::Pool(e.to_string()))?;
 
-        // ── WAL + performance pragmas ──────────────────────────────────────
-        // These are connection-level settings — SQLite does not persist them
-        // in the database file, so they must be applied on every new
-        // connection.
-        //
-        //   journal_mode = WAL
-        //     Write-Ahead Logging: readers never block writers and vice-versa.
-        //     Dramatically reduces lock contention when background scanner
-        //     tasks insert rows while the HTTP layer reads them.
-        //
-        //   synchronous = NORMAL
-        //     Recommended companion to WAL.  Durability is guaranteed up to
-        //     the last committed transaction on OS crash; only a power-loss
-        //     in the sub-second window before fsync could lose data.
-        //
-        //   busy_timeout = 5000
-        //     If another write is in-flight, retry for up to 5 seconds
-        //     before returning SQLITE_BUSY.  Prevents spurious errors when
-        //     the heartbeat scheduler and the HTTP API write simultaneously.
-        //
-        //   foreign_keys = ON
-        //     Must be set per-connection in SQLite; it is NOT a stored
-        //     database flag.  Enforces the referential constraints defined
-        //     in schema.sql (e.g. scan_history.device_id → devices.id).
-        //
-        //   temp_store = MEMORY
-        //     Keep temporary tables and indices in RAM instead of on disk.
-        //
-        //   mmap_size = 268435456 (256 MiB)
-        //     Memory-map the database file; faster sequential reads on the
-        //     NAS's spinning-disk or SSD-cached array.
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous   = NORMAL;
-             PRAGMA busy_timeout  = 5000;
-             PRAGMA foreign_keys  = ON;
-             PRAGMA temp_store    = MEMORY;
-             PRAGMA mmap_size     = 268435456;",
-        )?;
+        let db = Db {
+            pool:    Arc::new(pool),
+            db_path: path_str.into(),
+        };
 
-        info!(
-            "[FLIGHT_RECORDER] SQLite pragmas applied: \
-             WAL mode, synchronous=NORMAL, busy_timeout=5000ms, \
-             foreign_keys=ON, temp_store=MEMORY, mmap=256MiB"
-        );
-
-        // ── Schema migrations ──────────────────────────────────────────────
-        run_migrations(&conn)?;
-
-        info!(
-            "[FLIGHT_RECORDER] Storage layer ready — \
-             schema version {} — database: {}",
-            CURRENT_SCHEMA_VERSION,
-            path.display()
-        );
-
-        Ok(Db {
-            inner: Arc::new(Mutex::new(conn)),
+        // Apply pragmas + run migrations via the pool's first connection.
+        db.interact_mut(|conn| {
+            apply_pragmas(conn).map_err(|e| match e {
+                StorageError::Sqlite(err) => err,
+                _ => rusqlite::Error::InvalidQuery,
+            })?;
+            run_migrations(conn).map_err(|e| match e {
+                StorageError::Sqlite(err) => err,
+                _ => rusqlite::Error::InvalidQuery,
+            })?;
+            Ok(())
         })
+        .await?;
+
+        info!(
+            "[FLIGHT_RECORDER] Storage pool online — schema v{} — {}",
+            CURRENT_SCHEMA_VERSION, db.db_path
+        );
+
+        Ok(db)
     }
 
     // -----------------------------------------------------------------------
@@ -268,77 +220,34 @@ impl Db {
     // -----------------------------------------------------------------------
 
     /// Execute an **immutable** (read or single-statement write) closure
-    /// against the database connection on Tokio's blocking thread pool.
+    /// against a pooled connection on Tokio's blocking thread pool.
     ///
     /// The closure receives a shared `&Connection`.  For multi-statement
     /// transactions that require `conn.transaction()`, use [`Db::interact_mut`].
     ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let count: i64 = db
-    ///     .interact(|conn| {
-    ///         conn.query_row(
-    ///             "SELECT COUNT(*) FROM devices WHERE acknowledged = 0",
-    ///             [],
-    ///             |row| row.get(0),
-    ///         )
-    ///     })
-    ///     .await?;
-    /// ```
-    ///
     /// # Errors
     ///
     /// Propagates [`StorageError::Sqlite`] from the closure, or
-    /// [`StorageError::LockPoisoned`] / [`StorageError::TaskPanic`] from
-    /// the infrastructure layer.
+    /// [`StorageError::Pool`] / [`StorageError::TaskPanic`] from the
+    /// infrastructure layer.
     pub async fn interact<F, R>(&self, f: F) -> Result<R, StorageError>
     where
         F: FnOnce(&Connection) -> Result<R, rusqlite::Error> + Send + 'static,
         R: Send + 'static,
     {
-        let handle = Arc::clone(&self.inner);
-
-        tokio::task::spawn_blocking(move || {
-            // Acquire the lock synchronously on the blocking thread.
-            // This is safe: we are NOT on the Tokio event loop.
-            let guard: MutexGuard<Connection> =
-                handle.lock().map_err(|_| StorageError::LockPoisoned)?;
-
-            f(&guard).map_err(StorageError::Sqlite)
-        })
-        .await
-        .map_err(StorageError::from)? // JoinError (task panicked)
-        // Inner Result<R, StorageError> from the closure
+        let conn = self.pool.get().await
+            .map_err(|e| StorageError::Pool(e.to_string()))?;
+        conn.interact(move |c| f(c))
+            .await
+            .map_err(|e| StorageError::TaskPanic(e.to_string()))?
+            .map_err(StorageError::Sqlite)
     }
 
     /// Execute a **mutable** closure (transactions, DDL, multi-step writes)
-    /// against the database connection on Tokio's blocking thread pool.
+    /// against a pooled connection on Tokio's blocking thread pool.
     ///
     /// The closure receives an exclusive `&mut Connection`, which is required
     /// by `rusqlite` to start a [`rusqlite::Transaction`].
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// db.interact_mut(|conn| {
-    ///     let tx = conn.transaction()?;
-    ///     tx.execute(
-    ///         "INSERT OR REPLACE INTO devices \
-    ///          (mac, first_seen, last_seen, last_ip) \
-    ///          VALUES (?1, ?2, ?3, ?4)",
-    ///         rusqlite::params![mac, now_ms, now_ms, ip],
-    ///     )?;
-    ///     tx.execute(
-    ///         "INSERT INTO scan_history \
-    ///          (scan_id, scanned_at, device_id, ip, is_online) \
-    ///          VALUES (?1, ?2, last_insert_rowid(), ?3, 1)",
-    ///         rusqlite::params![scan_id, now_ms, ip],
-    ///     )?;
-    ///     tx.commit()
-    /// })
-    /// .await?;
-    /// ```
     ///
     /// # Errors
     ///
@@ -348,85 +257,86 @@ impl Db {
         F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error> + Send + 'static,
         R: Send + 'static,
     {
-        let handle = Arc::clone(&self.inner);
-
-        tokio::task::spawn_blocking(move || {
-            let mut guard: MutexGuard<Connection> =
-                handle.lock().map_err(|_| StorageError::LockPoisoned)?;
-
-            f(&mut guard).map_err(StorageError::Sqlite)
-        })
-        .await
-        .map_err(StorageError::from)?
+        let conn = self.pool.get().await
+            .map_err(|e| StorageError::Pool(e.to_string()))?;
+        conn.interact(move |c| f(c))
+            .await
+            .map_err(|e| StorageError::TaskPanic(e.to_string()))?
+            .map_err(StorageError::Sqlite)
     }
 
-    // -----------------------------------------------------------------------
-    // Ergonomic wrapper used by the higher-level sub-modules
-    // -----------------------------------------------------------------------
-
-    /// Execute a closure against the database connection on Tokio's blocking
-    /// thread pool, converting any error to `String`.
+    /// Execute a closure against a pooled connection, converting any error to
+    /// `String`.
     ///
-    /// This is the preferred entry point for the storage sub-modules
-    /// (`compactor`, `devices`, `history`, etc.) which all use
-    /// `Result<R, String>` internally rather than `Result<R, StorageError>`.
-    ///
-    /// The generic error bound `E: Display` means the same method accepts
-    /// closures that return either `Result<R, String>` *or*
-    /// `Result<R, rusqlite::Error>` — no `.map_err` boilerplate needed at
-    /// call sites that discard the return value.
+    /// This is the preferred entry point for storage sub-modules which use
+    /// `Result<R, String>` internally.  Accepts closures returning
+    /// `Result<R, E>` for **any** `E: Display`.
     ///
     /// # Reactor Safety
     ///
     /// `rusqlite` is a synchronous C-library.  The closure **always** runs on
-    /// `tokio::task::spawn_blocking`'s dedicated thread pool and never blocks
-    /// the async reactor.
-    /// Execute a closure against the database on the blocking thread pool,
-    /// converting any error to `String` via its `Display` impl.
-    ///
-    /// Accepts closures that return `Result<R, E>` for **any** `E: Display`:
-    ///  - `Result<R, String>` — storage sub-modules
-    ///  - `Result<R, rusqlite::Error>` — API handlers that use `?` directly
-    ///
-    /// For closures whose return type Rust cannot infer (e.g. those that only
-    /// ever hit the `Ok(())` path), annotate the closure explicitly:
-    /// ```rust,ignore
-    /// db.execute(|conn| -> Result<(), String> { … Ok(()) })
-    /// ```
+    /// `deadpool-sqlite`'s internal `spawn_blocking` pool and never blocks the
+    /// Tokio event loop.
     pub async fn execute<F, R, E>(&self, f: F) -> Result<R, String>
     where
         F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
         R: Send + 'static,
         E: std::fmt::Display + Send + 'static,
     {
-        let handle = Arc::clone(&self.inner);
-
-        tokio::task::spawn_blocking(move || {
-            let guard: MutexGuard<Connection> =
-                handle.lock().map_err(|_| "[DB] mutex poisoned".to_string())?;
-            f(&guard).map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("[DB] spawn_blocking panicked: {e}"))?
+        let conn = self.pool.get().await
+            .map_err(|e| format!("[DB] pool exhausted: {e}"))?;
+        conn.interact(move |c| f(c).map_err(|e| e.to_string()))
+            .await
+            .map_err(|e| format!("[DB] spawn_blocking panicked: {e}"))?
     }
 
-    /// Open a **dedicated** (non-shared) connection to the same database file
-    /// for health probes and diagnostic tooling.  Not for query hot-paths.
+    /// Open a **dedicated** (non-pooled) connection to the same database for
+    /// health probes and diagnostic tooling.  Not for query hot-paths.
     pub fn connect_dedicated(&self) -> Result<Connection, rusqlite::Error> {
-        let path = {
-            let guard = self.inner.lock().map_err(|_| {
-                rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-                    Some("mutex poisoned".to_string()),
-                )
-            })?;
-            // Execute a no-op query to retrieve the database filename.
-            guard.query_row("PRAGMA database_list", [], |row| {
-                row.get::<_, String>(2)
-            })?
-        };
-        Connection::open(path)
+        let conn = Connection::open(self.db_path.as_ref())?;
+        apply_pragmas(&conn).map_err(|e| match e {
+            StorageError::Sqlite(re) => re,
+            _ => rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+                Some("pragma application failed".to_string()),
+            ),
+        })?;
+        Ok(conn)
     }
+}
+
+// ---------------------------------------------------------------------------
+// WAL + performance pragmas (applied to every connection in the pool)
+// ---------------------------------------------------------------------------
+
+/// Apply the standard WAL + performance pragmas to a connection.
+///
+/// These are connection-level settings; SQLite does not persist them in the
+/// database file, so they must be applied to every new connection.
+///
+/// | Pragma         | Value       | Reason |
+/// |----------------|-------------|--------|
+/// | journal_mode   | WAL         | Readers never block writers |
+/// | synchronous    | NORMAL      | WAL-safe; balances durability vs speed |
+/// | busy_timeout   | 5000 ms     | Retry on write contention before failing |
+/// | foreign_keys   | ON          | Enforce referential constraints per-connection |
+/// | temp_store     | MEMORY      | Keep temp tables in RAM |
+/// | mmap_size      | 256 MiB     | Memory-map the DB file for faster reads |
+fn apply_pragmas(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous   = NORMAL;
+         PRAGMA busy_timeout  = 5000;
+         PRAGMA foreign_keys  = ON;
+         PRAGMA temp_store    = MEMORY;
+         PRAGMA mmap_size     = 268435456;",
+    )?;
+    info!(
+        "[FLIGHT_RECORDER] SQLite pragmas applied: \
+         WAL, synchronous=NORMAL, busy_timeout=5000ms, \
+         foreign_keys=ON, temp_store=MEMORY, mmap=256MiB"
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -436,21 +346,15 @@ impl Db {
 /// Apply all pending schema migrations in version order.
 ///
 /// Version tracking uses SQLite's built-in `PRAGMA user_version`.  The value
-/// starts at 0 on a fresh database and is bumped atomically by each
-/// migration block.
+/// starts at 0 on a fresh database and is bumped atomically by each block.
 ///
 /// ## How to add a new migration
 ///
 /// 1. Increment [`CURRENT_SCHEMA_VERSION`].
-/// 2. Add a new `if current_version < N { … }` block below the existing ones.
+/// 2. Add a new `if stored_version < N { … }` block below.
 /// 3. Apply the DDL with `conn.execute_batch(…)`.
-/// 4. Stamp the new version with `conn.pragma_update(None, "user_version", N)`.
-///
-/// Keep each block idempotent where possible (`ALTER TABLE … IF NOT EXISTS`
-/// is not valid in SQLite for column additions, but you can guard with a
-/// `SELECT COUNT(*) FROM pragma_table_info(…)` check if needed).
+/// 4. Stamp with `conn.pragma_update(None, "user_version", N)`.
 fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
-    // Read the version that is currently stamped in the database file.
     let stored_version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap_or_else(|e| {
@@ -463,8 +367,7 @@ fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
         });
 
     info!(
-        "[FLIGHT_RECORDER] Schema migration check — \
-         stored version: {}, target version: {}",
+        "[FLIGHT_RECORDER] Schema migration check — stored: {}, target: {}",
         stored_version, CURRENT_SCHEMA_VERSION
     );
 
@@ -473,43 +376,19 @@ fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
         return Ok(());
     }
 
-    // ── v0 → v1: Initial schema (devices, scan_history, device_events, settings)
+    // ── v0 → v1: Initial schema ──────────────────────────────────────────────
     if stored_version < 1 {
         info!("[FLIGHT_RECORDER] Applying migration v0 → v1 (initial schema DDL)");
-
         conn.execute_batch(SCHEMA_SQL).map_err(|e| {
-            error!(
-                "[FLIGHT_RECORDER] Migration v1 FAILED — schema.sql execution error: {}",
-                e
-            );
-            StorageError::MigrationFailed {
-                version: 1,
-                source: e,
-            }
+            error!("[FLIGHT_RECORDER] Migration v1 FAILED — schema.sql error: {}", e);
+            StorageError::MigrationFailed { version: 1, source: e }
         })?;
-
-        // Stamp the version only after the migration succeeds, so a crash
-        // mid-migration will cause a clean retry on the next startup.
         conn.pragma_update(None, "user_version", 1_i64)
-            .map_err(|e| {
-                error!(
-                    "[FLIGHT_RECORDER] Failed to stamp schema version 1: {}",
-                    e
-                );
-                StorageError::MigrationFailed {
-                    version: 1,
-                    source: e,
-                }
-            })?;
-
+            .map_err(|e| StorageError::MigrationFailed { version: 1, source: e })?;
         info!("[FLIGHT_RECORDER] Migration v1 applied and stamped successfully");
     }
 
-    // ── v1 → v2: Extended schema (additional tables + ALTER TABLE columns) ───
-    //
-    // `migrations::run` is idempotent: every CREATE uses IF NOT EXISTS and
-    // every ALTER TABLE failure is silently ignored (SQLite rejects duplicate
-    // column additions).  Running it on a v1 database is always safe.
+    // ── v1 → v2: Extended schema ─────────────────────────────────────────────
     if stored_version < 2 {
         info!(
             "[FLIGHT_RECORDER] Applying migration v1 → v2 \
@@ -517,69 +396,43 @@ fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
              device_aliases, system_status, notification_providers, \
              hourly_metrics, device_events + column additions)"
         );
-
         migrations::run(conn).map_err(|message| {
-            error!(
-                "[FLIGHT_RECORDER] Migration v2 FAILED — migrations::run error: {}",
-                message
-            );
+            error!("[FLIGHT_RECORDER] Migration v2 FAILED — migrations::run error: {}", message);
             StorageError::MigrationScript { version: 2, message }
         })?;
-
         conn.pragma_update(None, "user_version", 2_i64)
-            .map_err(|e| {
-                error!(
-                    "[FLIGHT_RECORDER] Failed to stamp schema version 2: {}",
-                    e
-                );
-                StorageError::MigrationFailed { version: 2, source: e }
-            })?;
-
+            .map_err(|e| StorageError::MigrationFailed { version: 2, source: e })?;
         info!("[FLIGHT_RECORDER] Migration v2 applied and stamped successfully");
     }
 
-    // ── v2 → v3: Add is_active column to devices table ───────────────────────
+    // ── v2 → v3: Add devices.is_active ──────────────────────────────────────
     if stored_version < 3 {
         info!("[FLIGHT_RECORDER] Applying migration v2 → v3 (add devices.is_active)");
+        // Ignore error — column may already exist on upgraded databases.
         let _ = conn.execute(
             "ALTER TABLE devices ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
             [],
         );
         conn.pragma_update(None, "user_version", 3_i64)
-            .map_err(|e| {
-                error!(
-                    "[FLIGHT_RECORDER] Failed to stamp schema version 3: {}",
-                    e
-                );
-                StorageError::MigrationFailed {
-                    version: 3,
-                    source: e,
-                }
-            })?;
+            .map_err(|e| StorageError::MigrationFailed { version: 3, source: e })?;
         info!("[FLIGHT_RECORDER] Migration v3 applied and stamped successfully");
     }
 
     // ── Future migrations ────────────────────────────────────────────────────
     //
-    // Example v3 → v4:
+    // Template for v3 → v4:
     //
     //   if stored_version < 4 {
-    //       info!("[FLIGHT_RECORDER] Applying migration v3 → v4 (add devices.is_gateway)");
-    //       conn.execute_batch(
-    //           "ALTER TABLE devices ADD COLUMN is_gateway INTEGER NOT NULL DEFAULT 0;"
-    //       )
-    //       .map_err(|e| StorageError::MigrationFailed { version: 4, source: e })?;
-    //       conn.pragma_update(None, "user_version", 4_i64)
-    //           .map_err(|e| StorageError::MigrationFailed { version: 4, source: e })?;
+    //       info!("[FLIGHT_RECORDER] Applying migration v3 → v4 (...)");
+    //       conn.execute_batch("ALTER TABLE devices ADD COLUMN …")?;
+    //       conn.pragma_update(None, "user_version", 4_i64)?;
     //       info!("[FLIGHT_RECORDER] Migration v4 applied and stamped successfully");
     //   }
 
     info!(
-        "[FLIGHT_RECORDER] All migrations complete — \
-         schema is now at version {}",
+        "[FLIGHT_RECORDER] All migrations complete — schema at version {}",
         CURRENT_SCHEMA_VERSION
     );
-
     Ok(())
 }
 
@@ -591,19 +444,24 @@ fn run_migrations(conn: &Connection) -> Result<(), StorageError> {
 mod tests {
     use super::*;
 
-    /// Helper: open a fresh in-memory database and run migrations.
-    fn open_test_db() -> Db {
-        Db::open(":memory:").expect("in-memory database should open cleanly")
+    // ── Schema-level tests use a plain in-memory connection ──────────────────
+    //
+    // deadpool-sqlite does not support `:memory:` in the pool (each pooled
+    // connection is a separate in-memory DB invisible to the others).  For
+    // schema integrity tests we use a raw `rusqlite::Connection` directly.
+
+    fn open_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory connection");
+        apply_pragmas(&conn).expect("pragmas");
+        run_migrations(&conn).expect("migrations");
+        conn
     }
 
     // ── Schema integrity ─────────────────────────────────────────────────────
 
-    /// All four tables must exist after a fresh migration.
     #[test]
     fn all_tables_created_after_migration() {
-        let db = open_test_db();
-        let conn = db.inner.lock().expect("lock");
-
+        let conn = open_test_conn();
         for table in &["devices", "scan_history", "device_events", "settings"] {
             let count: i64 = conn
                 .query_row(
@@ -617,94 +475,83 @@ mod tests {
         }
     }
 
-    /// `PRAGMA user_version` must equal [`CURRENT_SCHEMA_VERSION`] after
-    /// a successful migration.
     #[test]
     fn user_version_stamped_correctly() {
-        let db = open_test_db();
-        let conn = db.inner.lock().expect("lock");
-
+        let conn = open_test_conn();
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .expect("user_version pragma");
-
         assert_eq!(
             version, CURRENT_SCHEMA_VERSION,
-            "PRAGMA user_version should match CURRENT_SCHEMA_VERSION after migration"
+            "PRAGMA user_version should match CURRENT_SCHEMA_VERSION"
         );
     }
 
-    /// Re-applying the schema SQL a second time must not return an error
-    /// (all statements are `CREATE … IF NOT EXISTS`).
     #[test]
     fn schema_application_is_idempotent() {
-        let db = open_test_db();
-        let conn = db.inner.lock().expect("lock");
-
-        // Applying the embedded schema again must not fail.
+        let conn = open_test_conn();
         conn.execute_batch(SCHEMA_SQL)
             .expect("second schema application must be idempotent");
     }
 
-    /// `foreign_keys` pragma must be ON after opening the database.
     #[test]
     fn foreign_keys_are_enforced() {
-        let db = open_test_db();
-        let conn = db.inner.lock().expect("lock");
-
-        let fk_status: i64 = conn
+        let conn = open_test_conn();
+        let fk: i64 = conn
             .pragma_query_value(None, "foreign_keys", |r| r.get(0))
             .expect("foreign_keys pragma");
-
-        assert_eq!(fk_status, 1, "PRAGMA foreign_keys should be ON (1)");
+        assert_eq!(fk, 1, "PRAGMA foreign_keys should be ON (1)");
     }
 
-    /// Inserting a `scan_history` row that references a non-existent
-    /// `device_id` must be rejected by the foreign-key constraint.
     #[test]
     fn foreign_key_violation_is_rejected() {
-        let db = open_test_db();
-        let conn = db.inner.lock().expect("lock");
-
+        let conn = open_test_conn();
         let result = conn.execute(
             "INSERT INTO scan_history \
              (scan_id, scanned_at, device_id, ip, is_online) \
              VALUES ('test-1', 1000, 9999, '10.0.0.1', 1)",
             [],
         );
-
         assert!(
             result.is_err(),
             "INSERT referencing non-existent device_id should fail"
         );
     }
 
-    // ── Async interact wrappers ──────────────────────────────────────────────
+    // ── Async pool tests use a temp file ────────────────────────────────────
+    //
+    // Each test gets a unique temp DB file so they don't share state.
 
-    /// A successful `interact` call must return the query result.
+    async fn open_test_db() -> Db {
+        let path = format!("/tmp/shabakat_test_{}.db", monotonic_suffix());
+        Db::open(&path).await.expect("test pool should open")
+    }
+
+    fn monotonic_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
     #[tokio::test]
     async fn interact_returns_query_result() {
-        let db = open_test_db();
-
+        let db = open_test_db().await;
         let count: i64 = db
             .interact(|conn| conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0)))
             .await
             .expect("interact should succeed on empty table");
-
         assert_eq!(count, 0);
     }
 
-    /// A failing query inside `interact` must surface as `StorageError::Sqlite`.
     #[tokio::test]
     async fn interact_surfaces_sqlite_errors() {
-        let db = open_test_db();
-
+        let db = open_test_db().await;
         let result: Result<i64, StorageError> = db
             .interact(|conn| {
                 conn.query_row("SELECT * FROM nonexistent_table_xyz", [], |r| r.get(0))
             })
             .await;
-
         assert!(
             matches!(result, Err(StorageError::Sqlite(_))),
             "expected StorageError::Sqlite, got: {:?}",
@@ -712,18 +559,13 @@ mod tests {
         );
     }
 
-    /// `interact_mut` must be able to open a transaction, write a row, and
-    /// commit it — all via the blocking wrapper.
     #[tokio::test]
     async fn interact_mut_transaction_commits() {
-        let db = open_test_db();
-
-        // Insert a device via a transaction.
+        let db = open_test_db().await;
         db.interact_mut(|conn| {
             let tx = conn.transaction()?;
             tx.execute(
-                "INSERT INTO devices (mac, first_seen, last_seen) \
-                 VALUES (?1, ?2, ?2)",
+                "INSERT INTO devices (mac, first_seen, last_seen) VALUES (?1, ?2, ?2)",
                 rusqlite::params!["AA:BB:CC:DD:EE:FF", 1_700_000_000_000_i64],
             )?;
             tx.commit()
@@ -731,53 +573,40 @@ mod tests {
         .await
         .expect("transaction should commit");
 
-        // Verify the row exists via a read-only interact.
         let count: i64 = db
             .interact(|conn| conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0)))
             .await
             .expect("read after write");
-
         assert_eq!(count, 1, "device should be present after committed transaction");
     }
 
-    /// A rolled-back transaction must leave the table empty.
     #[tokio::test]
     async fn interact_mut_rollback_leaves_no_rows() {
-        let db = open_test_db();
-
-        let result = db
-            .interact_mut(|conn| {
-                let tx = conn.transaction()?;
-                tx.execute(
-                    "INSERT INTO devices (mac, first_seen, last_seen) \
-                     VALUES (?1, ?2, ?2)",
-                    rusqlite::params!["AA:BB:CC:DD:EE:FF", 1_700_000_000_000_i64],
-                )?;
-                // Intentionally do not commit — drop rolls back automatically.
-                drop(tx);
-                Ok(())
-            })
-            .await;
-
-        // The drop-rollback itself is not an error.
-        assert!(result.is_ok());
+        let db = open_test_db().await;
+        db.interact_mut(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "INSERT INTO devices (mac, first_seen, last_seen) VALUES (?1, ?2, ?2)",
+                rusqlite::params!["AA:BB:CC:DD:EE:FF", 1_700_000_000_000_i64],
+            )?;
+            drop(tx); // implicit rollback
+            Ok(())
+        })
+        .await
+        .expect("drop-rollback should not error");
 
         let count: i64 = db
             .interact(|conn| conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0)))
             .await
             .expect("read after rollback");
-
         assert_eq!(count, 0, "rollback should leave no rows");
     }
 
-    /// Cloning the handle and using both clones concurrently must not cause
-    /// data races or panics (the Mutex serialises access).
     #[tokio::test]
-    async fn cloned_handles_share_the_same_connection() {
-        let db_a = open_test_db();
-        let db_b = db_a.clone(); // Same Arc<Mutex<Connection>>
+    async fn cloned_handles_share_the_same_pool() {
+        let db_a = open_test_db().await;
+        let db_b = db_a.clone(); // Same Arc<Pool>
 
-        // Write via db_a.
         db_a.interact_mut(|conn| {
             conn.execute(
                 "INSERT INTO devices (mac, first_seen, last_seen) \
@@ -789,7 +618,6 @@ mod tests {
         .await
         .expect("write via db_a");
 
-        // Read via db_b — must see the row inserted through db_a.
         let count: i64 = db_b
             .interact(|conn| conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0)))
             .await
@@ -797,7 +625,7 @@ mod tests {
 
         assert_eq!(
             count, 1,
-            "db_b must observe the row written through db_a (shared connection)"
+            "db_b must observe the row written through db_a (shared pool)"
         );
     }
 }

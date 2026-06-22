@@ -33,10 +33,10 @@ function getIcon(node: TopologyNode) {
   if (node.isAdGuard) return <Shield className="size-full" />;
   
   const type = node.likelyType?.toLowerCase() || "";
-  if (type.includes("phone")) return <Smartphone className="size-full" />;
-  if (type.includes("laptop") || type.includes("pc")) return <Laptop className="size-full" />;
-  if (type.includes("tv")) return <Tv className="size-full" />;
-  if (type.includes("iot") || type.includes("esp")) return <Cpu className="size-full" />;
+  if (type?.includes("phone")) return <Smartphone className="size-full" />;
+  if (type?.includes("laptop") || type?.includes("pc")) return <Laptop className="size-full" />;
+  if (type?.includes("tv")) return <Tv className="size-full" />;
+  if (type?.includes("iot") || type?.includes("esp")) return <Cpu className="size-full" />;
   
   return <Globe className="size-full" />;
 }
@@ -229,6 +229,15 @@ export function TopologyMap() {
 
       nodeElement.call(dragBehavior as any);
     });
+
+    return () => {
+      nodes.forEach(node => {
+        const nodeElement = svg.select(`#node-${node.id.replace(/:/g, '-')}`);
+        if (!nodeElement.empty()) {
+          nodeElement.on(".drag", null);
+        }
+      });
+    };
   }, [nodes]);
 
   if (loading && !data) {

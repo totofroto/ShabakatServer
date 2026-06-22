@@ -2,6 +2,8 @@ services:
   shabakat:
     build: .
     network_mode: "host"
+    # ports:
+    #   - "7779:7779"
     image: shabakat-server:latest
     container_name: shabakat-server
     restart: unless-stopped
@@ -18,8 +20,10 @@ services:
       - .env
 
     volumes:
-      # SQLite database persists here across container restarts / upgrades
-      - ./data:/data
+      # Named Docker volume for SQLite persistence.
+      # This bypasses Asustor BTRFS host-bind-mount restrictions that break
+      # SQLite WAL shared-memory mapping and cause "disk image is malformed".
+      - shabakat_data:/data
 
     logging:
       driver: "json-file"
@@ -27,3 +31,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
+volumes:
+  shabakat_data:
+    driver: local

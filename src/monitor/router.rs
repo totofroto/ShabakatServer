@@ -33,7 +33,7 @@ pub async fn run_bandwidth_monitor(state: AppState) {
                 };
                 
                 {
-                    let mut b = state.bandwidth.lock().unwrap();
+                    let mut b = state.bandwidth.lock().unwrap_or_else(|p| p.into_inner());
                     *b = Some(stats);
                 }
                 

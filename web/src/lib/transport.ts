@@ -1,18 +1,12 @@
 /**
- * Transport adapter — Tauri IPC in-app, HTTP + WebSocket in browser.
- * Import { invoke, listen, isTauri } from here instead of @tauri-apps/api/*.
+ * Transport adapter — HTTP + WebSocket in browser.
  */
-import {
-  invoke as tauriInvoke,
-} from "@tauri-apps/api/core";
-import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
-import { listen as tauriListen } from "@tauri-apps/api/event";
 import { API_BASE_URL } from "./constants";
 
-// Detect runtime profile (Tauri App Context vs Standalone Browser Container Mode)
-export const isTauri = () => typeof window !== 'undefined' && '__TAURI__' in window;
+export const isTauri = () => false;
 
-export type { UnlistenFn, EventCallback };
+export type UnlistenFn = () => void;
+export type EventCallback<T> = (event: { event: string; payload: T; id: number }) => void;
 
 // ── Telemetry Interfaces ──────────────────────────────────────────────────────
 
@@ -41,6 +35,12 @@ type TelemetryHandler = (event: string, data: any) => void;
 
 let _ws: WebSocket | null = null;
 let _reconnectAttempts = 0;
+// Auth is HttpOnly-cookie based — there is no readable token to gate on.
+// Instead, the socket only connects once AuthContext has explicitly
+// confirmed a valid session (via a successful GET /api/auth/me) and called
+// connectWs(). disconnectWs() (called on logout) flips this back off and
+// stops the auto-reconnect loop below.
+let _wsAuthorized = false;
 const MAX_RECONNECT_DELAY = 30000;
 const _handlers = new Map<string, Array<(data: unknown) => void>>();
 const _wildcardHandlers: Array<TelemetryHandler> = [];
@@ -67,7 +67,7 @@ function parsePingLatency(raw: string): number | null {
 }
 
 function ensureWs(): void {
-  if (isTauri()) return;
+  if (!_wsAuthorized) return;
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
 
   const wsUrl = `${API_BASE_URL.replace(/^http/, "ws")}/ws`;
@@ -108,6 +108,7 @@ function ensureWs(): void {
 
   ws.onclose = () => {
     _ws = null;
+    if (!_wsAuthorized) return; // logged out / never authorized — don't reconnect
     console.warn("[TRANSPORT] Telemetry link channel severed. Reconnection scheduled.");
     const delay = Math.min(1000 * Math.pow(2, _reconnectAttempts), MAX_RECONNECT_DELAY);
     _reconnectAttempts++;
@@ -120,6 +121,32 @@ function ensureWs(): void {
   };
 
   _ws = ws;
+}
+
+/**
+ * Open (or re-open) the telemetry WebSocket. Call this only after a
+ * successful `GET /api/auth/me` confirms the session is valid — the
+ * HttpOnly auth cookie itself isn't readable from JS, so AuthContext is the
+ * sole source of truth for "are we actually logged in".
+ */
+export function connectWs(): void {
+  _wsAuthorized = true;
+  _reconnectAttempts = 0;
+  ensureWs();
+}
+
+/**
+ * Tear down the telemetry WebSocket and stop the auto-reconnect loop.
+ * Call this on logout (and on a failed/expired session check) so a stale
+ * connection doesn't keep retrying against an unauthenticated server.
+ */
+export function disconnectWs(): void {
+  _wsAuthorized = false;
+  _reconnectAttempts = 0;
+  if (_ws) {
+    _ws.close();
+    _ws = null;
+  }
 }
 
 function wsListen<T>(event: string, handler: (data: T) => void): UnlistenFn {
@@ -142,28 +169,12 @@ function wsListen<T>(event: string, handler: (data: T) => void): UnlistenFn {
  * high-frequency WebSocket frames straight into structural UI states.
  */
 export function subscribeTelemetryEvents(handler: TelemetryHandler): () => void {
-  if (isTauri()) {
-    // If inside the mobile/desktop app context, fallback to Tauri internal IPC listener rules
-    console.log("[TRANSPORT] Running in Tauri native app wrapper mode.");
-    
-    // In Tauri mode, we need to manually bind the events we expect from the backend
-    // Since this is a wildcard handler, we'd need to listen to all known events.
-    // For now, we'll return an empty unloader as requested.
-    return () => {};
-  } else {
-    ensureWs();
-    _wildcardHandlers.push(handler);
-    return () => {
-      const idx = _wildcardHandlers.indexOf(handler);
-      if (idx >= 0) _wildcardHandlers.splice(idx, 1);
-    };
-  }
-}
-
-// Eagerly connect the WebSocket when this module is imported in browser mode
-// so it's ready before the user clicks Scan.
-if (typeof window !== "undefined" && !isTauri()) {
   ensureWs();
+  _wildcardHandlers.push(handler);
+  return () => {
+    const idx = _wildcardHandlers.indexOf(handler);
+    if (idx >= 0) _wildcardHandlers.splice(idx, 1);
+  };
 }
 
 // ── listen() ─────────────────────────────────────────────────────────────────
@@ -172,7 +183,6 @@ export function listen<T>(
   event: string,
   handler: EventCallback<T>,
 ): Promise<UnlistenFn> {
-  if (isTauri()) return tauriListen<T>(event, handler);
   const unlisten = wsListen<T>(event, (data) =>
     handler({ event, payload: data, id: 0 }),
   );
@@ -181,11 +191,13 @@ export function listen<T>(
 
 // ── Command map ───────────────────────────────────────────────────────────────
 
+// PROTOCOL CHANGE (2026-06-15): backend no longer includes `devices` in scan_finished payload.
+// Removed from type to prevent stale usage — use GET /api/devices after scan_finished instead.
 type ScanFinishedData = {
   scanId: string;
   averageLatencyMs: number | null;
   scannedHosts: number;
-  devices?: any[];
+  // devices field intentionally absent — see HANDOFF.md §9
 };
 
 /**
@@ -207,28 +219,20 @@ async function browserRequest<T>(
   }
 
   // Auto-set Content-Type for JSON payloads
-  if (["POST", "PATCH", "PUT"].includes(method)) {
+  if (["POST", "PATCH", "PUT"]?.includes(method)) {
     if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
       headers.set("Content-Type", "application/json");
     }
   }
 
   try {
-    const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+    const fullUrl = url?.startsWith("http") ? url : `${API_BASE_URL}${url}`;
     const res = await fetch(fullUrl, {
       ...init,
       headers,
       credentials: "include",
     });
 
-    if (res.status === 401) {
-      // If we get a 401, the token might be expired
-      localStorage.removeItem("shabakat_session_token");
-      // Optional: trigger a redirect to login if not already there
-      // if (!window.location.pathname.startsWith("/login")) {
-      //    window.location.href = "/login";
-      // }
-    }
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => "Unknown error");
@@ -241,8 +245,8 @@ async function browserRequest<T>(
 
       console.error(`[API Error] ${method} ${url} ${res.status}:`, errorObj);
       
-      // Return error object as T so callers get it instead of a crash/throw
-      return errorObj as unknown as T;
+      const errorMessage = errorObj?.error || errorObj?.message || `HTTP ${res.status}`;
+      return Promise.reject(new Error(errorMessage));
     }
 
     if (res.status === 204) return undefined as unknown as T;
@@ -250,7 +254,7 @@ async function browserRequest<T>(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Network Error] ${method} ${url}:`, msg);
-    return { error: msg } as unknown as T;
+    return Promise.reject(new Error(msg));
   }
 }
 
@@ -258,9 +262,6 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
   // No-ops: Android/permission commands that don't apply in browser
   if (command === "cancel_scan" || command === "abort_scan") return undefined as unknown as T;
   if (command === "get_active_ip") return "" as unknown as T;
-  if (command === "request_android_permissions") {
-    return { status: "granted", fineLocation: true, nearbyWifiDevices: true, coarseLocation: true } as unknown as T;
-  }
   if (command === "check_permission") return true as unknown as T;
 
   // Scan status — polled by ensureHistoryMapHydrated before loading devices.
@@ -299,8 +300,9 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
         if (data.scanId !== scanId) return;
         cleanup();
         resolve({
-          // Strict array guard — never allow an object to reach .slice/.map callers.
-          devices: Array.isArray(data.devices) ? data.devices : [],
+          // PROTOCOL CHANGE (2026-06-15): backend no longer sends devices in scan_finished.
+          // Resolve with empty array — useNetworkScan.ts will fetch GET /api/devices instead.
+          devices: [],
           scanId: data.scanId,
           averageLatencyMs: data.averageLatencyMs ?? null,
           scannedHosts: data.scannedHosts ?? 0,
@@ -486,7 +488,6 @@ async function browserInvoke<T>(command: string, args: Record<string, unknown>):
 // ── invoke() — public API ────────────────────────────────────────────────────
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (isTauri()) return tauriInvoke<T>(command, args);
   return browserInvoke<T>(command, args ?? {});
 }
 
@@ -497,7 +498,7 @@ export const transport = {
    */
   fetch: (input: RequestInfo | URL, init?: RequestInit) => {
     let finalInput = input;
-    if (typeof input === "string" && !input.startsWith("http")) {
+    if (typeof input === "string" && !input?.startsWith("http")) {
       finalInput = `${API_BASE_URL}${input}`;
     }
 
@@ -514,13 +515,15 @@ export const transport = {
       headers.set("Authorization", `Bearer ${token}`);
     }
 
-    if (["POST", "PATCH", "PUT"].includes(method)) {
+    if (["POST", "PATCH", "PUT"]?.includes(method)) {
       if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
         headers.set("Content-Type", "application/json");
       }
     }
     options.headers = headers;
-    return window.fetch(finalInput, options);
+    return window.fetch(finalInput, options).then((res) => {
+      return res;
+    });
   },
   invoke,
   isTauri,

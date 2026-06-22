@@ -3,7 +3,7 @@
 
 # Node / React
 node_modules/
-dist/
+# dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -22,7 +22,7 @@ yarn-error.log*
 *.dmg
 *.iso
 *.pkg
-/ui_dist
+# /ui_dist
 
 # Private credentials and temporary logs
 home-setup.md

@@ -1,14 +1,4 @@
 import { invoke, isTauri, listen, transport } from "@/lib/transport";
-import {
-  checkPermissions,
-  requestPermissions,
-} from "@tauri-apps/plugin-geolocation";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
-import { Store } from "@tauri-apps/plugin-store";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDeviceStore } from "@/stores/deviceStore";
 
@@ -65,44 +55,7 @@ export function deviceLifecycleState(
 }
 export const DEVICES_STORE_KEY = "devices";
 
-const DEVICE_STORE_OPTIONS = { defaults: {}, autoSave: false as const };
-
-/** Caches the native store handle; cleared on Vite HMR so it cannot desync from the Rust side. */
-let storeInstance: Store | null = null;
-let storeLoadPromise: Promise<Store> | null = null;
-
-/**
- * Async store init. `@tauri-apps/plugin-store` requires `Store.load(...)`; there is no `new Store(path)`.
- * Concurrent callers share one in-flight `Store.load`; successful load sets `storeInstance`.
- */
-async function getStore(): Promise<Store> {
-  if (!isTauri() || typeof window === "undefined") {
-    throw new Error("getStore: not available without Tauri");
-  }
-  if (storeInstance) {
-    return storeInstance;
-  }
-  if (!storeLoadPromise) {
-    storeLoadPromise = Store.load(DEVICES_STORE_FILE, DEVICE_STORE_OPTIONS)
-      .then((store) => {
-        storeInstance = store;
-        return store;
-      })
-      .catch((err) => {
-        storeInstance = null;
-        storeLoadPromise = null;
-        throw err;
-      });
-  }
-  return storeLoadPromise;
-}
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    storeInstance = null;
-    storeLoadPromise = null;
-  });
-}
+// Stores removed
 
 export type DeviceStatus = "Online" | "Offline" | "Warning";
 export type ScanMode = "silent" | "aggressive" | "deep";
@@ -193,12 +146,7 @@ type ScanNetworkPayload = {
   batchSeq?: number;
 };
 
-type AndroidPermissionResult = {
-  status: "granted" | "denied";
-  fineLocation: boolean;
-  nearbyWifiDevices: boolean;
-  coarseLocation: boolean;
-};
+
 
 
 function normalizeStatus(raw: string): DeviceStatus {
@@ -234,7 +182,7 @@ export function deviceHistoryUniqueId(
     m &&
     m !== "Unknown" &&
     m !== "MAC Restricted" &&
-    m.toLowerCase() !== "mac restricted"
+    m?.toLowerCase() !== "mac restricted"
   ) {
     return m;
   }
@@ -249,7 +197,7 @@ export function isValidMacForWakeOnLan(mac: string | undefined | null): boolean 
   if (!mac?.trim()) {
     return false;
   }
-  const low = mac.trim().toLowerCase();
+  const low = mac.trim()?.toLowerCase();
   if (low === "unknown" || low === "mac restricted") {
     return false;
   }
@@ -275,7 +223,7 @@ export function deviceHistoryKey(mac: string, ip: string): string {
   if (compact.length === 12) {
     return `mac:${compact}`;
   }
-  return `mac:${uid.toLowerCase()}`;
+  return `mac:${uid?.toLowerCase()}`;
 }
 
 function hasStableMac(mac: string): boolean {
@@ -293,7 +241,7 @@ function consolidateIpKeyForMacDevice(
   const drop: string[] = [];
   for (const [k, d] of historyMap) {
     if (
-      k.startsWith("ip:") &&
+      k?.startsWith("ip:") &&
       d.ip.trim() === inc.ip.trim() &&
       !hasStableMac(d.mac)
     ) {
@@ -305,45 +253,7 @@ function consolidateIpKeyForMacDevice(
   }
 }
 
-function normalizeStoredDeviceRow(raw: unknown): DeviceRow | null {
-  if (!raw || typeof raw !== "object") {
-    return null;
-  }
-  const d = raw as Partial<DeviceRow>;
-  if (typeof d.ip !== "string" || !d.ip) {
-    return null;
-  }
-  const mac = typeof d.mac === "string" ? d.mac : "Unknown";
-  const isOnline = Boolean(d.isOnline);
-  const status = normalizeStatus(
-    typeof d.status === "string" ? d.status : isOnline ? "Online" : "Offline",
-  );
-  return {
-    status: isOnline ? status : "Offline",
-    name: typeof d.name === "string" ? d.name : "",
-    ip: d.ip,
-    mac,
-    vendor: typeof d.vendor === "string" ? d.vendor : "",
-    vendorName:
-      typeof d.vendorName === "string" ? d.vendorName : "Unknown",
-    deviceType: typeof d.deviceType === "string" ? d.deviceType : "unknown",
-    isRandomized: Boolean(d.isRandomized),
-    mdnsHostname: d.mdnsHostname ?? null,
-    mdnsPrimaryService: d.mdnsPrimaryService ?? null,
-    shieldHighlight: d.shieldHighlight,
-    likelyType: d.likelyType ?? null,
-    interrogationName: d.interrogationName ?? null,
-    hostname: typeof d.hostname === "string" ? d.hostname : null,
-    customName: d.customName ?? null,
-    isIgnored: Boolean(d.isIgnored),
-    isOnline,
-    // Disk snapshot = already part of history; badge is for fresh discoveries this session.
-    isNew: false,
-    lastSeen: typeof d.lastSeen === "number" ? d.lastSeen : null,
-    firstSeen: typeof d.firstSeen === "number" ? d.firstSeen : null,
-    rssi: typeof d.rssi === "number" ? d.rssi : null,
-  };
-}
+
 
 function mapDiscoveredToRow(
   p: DiscoveredDevicePayload,
@@ -387,7 +297,7 @@ function deviceCategorySortRank(d: DeviceRow): number {
     d.hostname,
     d.mdnsPrimaryService,
   ]
-    .map((s) => (s ?? "").trim().toLowerCase())
+    .map((s) => (s ?? "").trim()?.toLowerCase())
     .filter(Boolean)
     .join(" ");
   if (
@@ -405,11 +315,11 @@ function deviceCategorySortRank(d: DeviceRow): number {
   ) {
     return 1;
   }
-  const lt = d.likelyType?.trim().toLowerCase() ?? "";
-  if (lt && !lt.includes("unknown")) {
+  const lt = d.likelyType?.trim()?.toLowerCase() ?? "";
+  if (lt && !lt?.includes("unknown")) {
     return 2;
   }
-  const dt = d.deviceType?.trim().toLowerCase() ?? "";
+  const dt = d.deviceType?.trim()?.toLowerCase() ?? "";
   if (dt && dt !== "unknown") {
     return 3;
   }
@@ -426,7 +336,7 @@ function sortDevicesForDisplay(rows: DeviceRow[]): DeviceRow[] {
     if (ra !== rb) {
       return ra - rb;
     }
-    return a.ip.localeCompare(b.ip, undefined, { numeric: true });
+    return (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
   });
 }
 
@@ -504,7 +414,7 @@ function mergeScanProgress(
         mdnsPrimaryService:
           inc.mdnsPrimaryService?.trim() || existing.mdnsPrimaryService || null,
         name:
-          inc.name?.trim() && inc.name !== inc.ip && inc.name.toLowerCase() !== "unknown"
+          inc.name?.trim() && inc.name !== inc.ip && inc.name?.toLowerCase() !== "unknown"
             ? inc.name
             : existing.name || inc.name,
         shieldHighlight: inc.shieldHighlight ?? existing.shieldHighlight,
@@ -537,7 +447,7 @@ function mergeScanProgress(
         mdnsPrimaryService:
           inc.mdnsPrimaryService?.trim() || prior.mdnsPrimaryService || null,
         name:
-          inc.name?.trim() && inc.name !== inc.ip && inc.name.toLowerCase() !== "unknown"
+          inc.name?.trim() && inc.name !== inc.ip && inc.name?.toLowerCase() !== "unknown"
             ? inc.name
             : prior.name || inc.name,
         shieldHighlight: inc.shieldHighlight ?? prior.shieldHighlight,
@@ -577,59 +487,15 @@ function mergeScanProgress(
 
 /** Fires one OS notification per new host when permission is granted. */
 function notifyNewIntruderDevicesIfNeeded(
-  newIntruderNotifications: DeviceRow[],
+  _newIntruderNotifications: DeviceRow[],
 ): void {
-  if (newIntruderNotifications.length === 0) {
-    return;
-  }
-  if (!isTauri() || typeof window === "undefined") {
-    return;
-  }
-  void (async () => {
-    try {
-      if (!(await isPermissionGranted())) {
-        return;
-      }
-      for (const device of newIntruderNotifications) {
-        const name =
-          device.interrogationName?.trim() ||
-          device.hostname?.trim() ||
-          "Unknown Device";
-        sendNotification({
-          title: "New Device Detected",
-          body: `${name} joined your network (${device.ip}).`,
-        });
-      }
-    } catch (e) {
-      console.warn("Intruder notification failed:", e);
-    }
-  })();
+  // Notifications removed.
 }
 
 
-/** Drop invalid / ghost entries from disk or in-memory lists before use or persisting. */
-function filterValidStoredDeviceRawEntries(
-  items: unknown[],
-): unknown[] {
-  return items.filter(
-    (d) =>
-      d != null &&
-      typeof d === "object" &&
-      "ip" in d &&
-      typeof (d as { ip: unknown }).ip === "string" &&
-      (d as { ip: string }).ip.trim() !== "",
-  );
-}
 
-function filterValidDevicesForPersistence(devices: DeviceRow[]): DeviceRow[] {
-  return devices.filter(
-    (d) =>
-      d != null &&
-      typeof d === "object" &&
-      typeof d.ip === "string" &&
-      d.ip.trim() !== "",
-  );
-}
+
+
 
 // ── Browser: load from REST API ───────────────────────────────────────────────
 
@@ -727,55 +593,22 @@ async function browserLoadDevices(): Promise<DeviceRow[]> {
   }
 }
 
-async function loadDevicesFromStore(): Promise<DeviceRow[]> {
-  if (typeof window === "undefined") return [];
-  if (!isTauri()) return browserLoadDevices();
-  // ── Tauri: load from plugin-store ────────────────────────────────────────
-  try {
-    const store = await getStore();
-    const raw = await store.get(DEVICES_STORE_KEY);
-    if (!Array.isArray(raw)) {
-      return [];
-    }
-    const sanitized = filterValidStoredDeviceRawEntries(raw);
-    return sanitized
-      .map((item) => normalizeStoredDeviceRow(item))
-      .filter((x): x is DeviceRow => x !== null);
-  } catch (e) {
-    console.error("Failed to load device list from store:", e);
-    return [];
-  }
-}
+
 
 async function saveDevicesToStore(devices: DeviceRow[]): Promise<void> {
-  if (typeof window !== "undefined" && !isTauri()) {
+  if (typeof window !== "undefined") {
     try {
       localStorage.setItem(DEVICES_CACHE_KEY, JSON.stringify(devices));
     } catch (e) {
       console.warn("[saveDevicesToStore] Failed to cache devices:", e);
     }
-    return;
-  }
-  if (!isTauri() || typeof window === "undefined") {
-    return;
-  }
-  try {
-    const store = await getStore();
-    const valid = filterValidDevicesForPersistence(devices);
-    await store.set(DEVICES_STORE_KEY, valid);
-    await store.save();
-  } catch (e) {
-    console.error("Failed to save device list to store:", e);
   }
 }
 
 // Frontend safety timeout is intentionally longer than Rust's internal timeout so
 // backend cleanup and guard release happen first on slow networks.
 
-const PERMISSION_DENIED_MESSAGE =
-  "Permission required to see MAC addresses.";
-const ANDROID_FINE_LOCATION_AR_MESSAGE =
-  "يرجى تفعيل إذن الموقع الجغرافي (الدقيق) لرؤية الأجهزة.";
+
 const SCAN_TIMEOUT_MESSAGE =
   "Scan timed out. The network might be too large or restricted.";
 const JS_SCAN_TIMEOUT_BY_MODE: Record<ScanMode, number> = {
@@ -868,71 +701,49 @@ export function useNetworkScan() {
       await storeHydrationRef.current;
       return;
     }
-    if (!isTauri() || typeof window === "undefined") {
-      // Browser mode: pre-populate from localStorage (cache) immediately,
-      // then fetch from REST API in the background.
-      storeHydrationRef.current = (async () => {
-        setIsLoading(true);
-        // 1. Optimistic load from cache
-        try {
-          const cached = localStorage.getItem(DEVICES_CACHE_KEY);
-          if (cached) {
-            const loaded = JSON.parse(cached) as DeviceRow[];
-            if (Array.isArray(loaded) && loaded.length > 0) {
-              const m = useDeviceStore.getState()._map;
-              for (const row of loaded) {
-                m.set(deviceHistoryKey(row.mac, row.ip), row);
-              }
-              useDeviceStore.getState().setDevices(sortDevicesForDisplay(Array.from(m.values())));
-            }
-          }
-        } catch (e) {
-          console.warn("[ensureHistoryMapHydrated] Cache load failed:", e);
-        }
-
-        // 2. Wait for current scan status to avoid race conditions with backend
-        try {
-          const status = await invoke<{ isScanning: boolean }>("scan_status");
-          if (status.isScanning) {
-            console.log("[ensureHistoryMapHydrated] Scan active on server; waiting 2s for stability...");
-            await new Promise((resolve) => window.setTimeout(resolve, 2000));
-          }
-        } catch { /* ignore status check failures */ }
-
-        // 3. Background fetch from server
-        try {
-          const loaded = await browserLoadDevices();
-          const m = useDeviceStore.getState()._map;
-          if (loaded.length > 0) {
-            // Overwrite map with fresh data from server
+    // Browser mode: pre-populate from localStorage (cache) immediately,
+    // then fetch from REST API in the background.
+    storeHydrationRef.current = (async () => {
+      setIsLoading(true);
+      // 1. Optimistic load from cache
+      try {
+        const cached = localStorage.getItem(DEVICES_CACHE_KEY);
+        if (cached) {
+          const loaded = JSON.parse(cached) as DeviceRow[];
+          if (Array.isArray(loaded) && loaded.length > 0) {
+            const m = useDeviceStore.getState()._map;
             for (const row of loaded) {
               m.set(deviceHistoryKey(row.mac, row.ip), row);
             }
             useDeviceStore.getState().setDevices(sortDevicesForDisplay(Array.from(m.values())));
           }
-        } catch {
-          // non-fatal: device list starts empty or stays with cached data
-        } finally {
-          setIsLoading(false);
         }
-      })();
-      await storeHydrationRef.current;
-      return;
-    }
-    storeHydrationRef.current = (async () => {
-      setIsLoading(true);
+      } catch (e) {
+        console.warn("[ensureHistoryMapHydrated] Cache load failed:", e);
+      }
+
+      // 2. Wait for current scan status to avoid race conditions with backend
       try {
-        const loaded = await loadDevicesFromStore();
-        const m = useDeviceStore.getState()._map;
-        m.clear();
-        for (const row of loaded) {
-          const normalized = normalizeStoredDeviceRow(row);
-          if (!normalized) {
-            continue;
-          }
-          m.set(deviceHistoryKey(normalized.mac, normalized.ip), normalized);
+        const status = await invoke<{ isScanning: boolean }>("scan_status");
+        if (status.isScanning) {
+          console.log("[ensureHistoryMapHydrated] Scan active on server; waiting 2s for stability...");
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
         }
-        useDeviceStore.getState().setDevices(sortDevicesForDisplay(Array.from(m.values())));
+      } catch { /* ignore status check failures */ }
+
+      // 3. Background fetch from server
+      try {
+        const loaded = await browserLoadDevices();
+        const m = useDeviceStore.getState()._map;
+        if (loaded.length > 0) {
+          // Overwrite map with fresh data from server
+          for (const row of loaded) {
+            m.set(deviceHistoryKey(row.mac, row.ip), row);
+          }
+          useDeviceStore.getState().setDevices(sortDevicesForDisplay(Array.from(m.values())));
+        }
+      } catch {
+        // non-fatal: device list starts empty or stays with cached data
       } finally {
         setIsLoading(false);
       }
@@ -1019,91 +830,7 @@ export function useNetworkScan() {
   }, []);
 
   const ensurePermissionsForScan = useCallback(async (): Promise<boolean> => {
-    console.log("[JS_TRACE] ensurePermissionsForScan:start");
-    if (typeof window === "undefined" || !isTauri()) {
-      console.log("[JS_TRACE] ensurePermissionsForScan:non-tauri -> true");
-      return true;
-    }
-    setScanPermissionError(null);
-    const runningOnAndroid = /\bAndroid\b/i.test(window.navigator.userAgent);
-    console.log(`[JS_TRACE] ensurePermissionsForScan:runningOnAndroid=${runningOnAndroid}`);
-
-    // Desktop (macOS/Windows): ARP table reading requires no system permission.
-    // Skip the location gate entirely and just ensure notification permission.
-    if (!runningOnAndroid) {
-      try {
-        const notifGranted = await isPermissionGranted();
-        if (!notifGranted) { await requestPermission(); }
-      } catch (notifErr) {
-        console.warn("[JS_TRACE] notification permission:", notifErr);
-      }
-      return true;
-    }
-
-    try {
-      if (runningOnAndroid) {
-        // Backend-side Android permission probe before starting the scan flow.
-        console.log("[JS_TRACE] invoke request_android_permissions (preflight)");
-        const preflight = await invoke<AndroidPermissionResult>(
-          "request_android_permissions",
-        );
-        console.log("[JS_TRACE] preflight result:", preflight);
-        if (preflight.status !== "granted") {
-          console.log("[JS_TRACE] requesting geolocation permission from plugin");
-          await requestPermissions(["location"]);
-        }
-      }
-
-      const status = await checkPermissions();
-      console.log("[JS_TRACE] checkPermissions result:", status);
-      const locationGranted = status.location === "granted";
-      let fineLocationGranted = true;
-      let androidPermissionBundleGranted = true;
-      if (runningOnAndroid) {
-        console.log("[JS_TRACE] invoke request_android_permissions (post-check)");
-        const androidPermissionResult = await invoke<AndroidPermissionResult>(
-          "request_android_permissions",
-        );
-        console.log("[JS_TRACE] post-check permission bundle:", androidPermissionResult);
-        androidPermissionBundleGranted = androidPermissionResult.status === "granted";
-        console.log("[JS_TRACE] invoke check_permission for ACCESS_FINE_LOCATION");
-        fineLocationGranted = await invoke<boolean>("check_permission", {
-          permission: "android.permission.ACCESS_FINE_LOCATION",
-        });
-        console.log(`[JS_TRACE] fineLocationGranted=${fineLocationGranted}`);
-      }
-      const ok = locationGranted && fineLocationGranted && androidPermissionBundleGranted;
-      console.log(
-        `[JS_TRACE] permission gate result: locationGranted=${locationGranted}, fineLocationGranted=${fineLocationGranted}, androidBundle=${androidPermissionBundleGranted}, ok=${ok}`,
-      );
-      try {
-        let notifGranted = await isPermissionGranted();
-        if (!notifGranted) {
-          await requestPermission();
-        }
-      } catch (notifErr) {
-        console.warn("[JS_TRACE] notification permission:", notifErr);
-      }
-      if (!ok) {
-        const message = runningOnAndroid
-          ? ANDROID_FINE_LOCATION_AR_MESSAGE
-          : PERMISSION_DENIED_MESSAGE;
-        setScanPermissionError(message);
-        if (runningOnAndroid) {
-          window.alert(ANDROID_FINE_LOCATION_AR_MESSAGE);
-        }
-      }
-      return ok;
-    } catch (error) {
-      console.error("[JS_TRACE] Permission handshake failed (raw):", error);
-      console.error("[JS_TRACE] Permission handshake failed (stringified):", {
-        name: error instanceof Error ? error.name : undefined,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      setScanPermissionError(PERMISSION_DENIED_MESSAGE);
-      return false;
-    }
+    return true;
   }, []);
 
   const triggerScan = useCallback(async (mode: ScanMode = "silent") => {
@@ -1220,20 +947,12 @@ export function useNetworkScan() {
               setScannedHosts(event.payload.scannedHosts ?? 0);
               setTotalHosts(event.payload.totalHosts ?? 0);
               setProgressPct(100);
-              // Strict array guard — never allow a non-array (e.g. an error object)
-              // to reach any downstream .map/.slice caller.
-              const rawDevices = event.payload?.devices;
-              const payloadDevices: DiscoveredDevicePayload[] = Array.isArray(rawDevices) ? rawDevices : [];
+              // PROTOCOL CHANGE (2026-06-15, Coordinator directive):
+              // The backend no longer includes a `devices` array in the scan_finished payload
+              // (removed to eliminate double-emission with device_discovered batches).
+              // We simply rely on the devices already streamed and accumulated in historyMap.
               const { _map: historyMap, setDevices } = useDeviceStore.getState();
-              if (payloadDevices.length > 0) {
-                const names = readCustomNamesFromStorage();
-                const rows = payloadDevices.map((p) => mapDiscoveredToRow(p, names));
-                const merged = mergeScanProgress(historyMap, rows);
-                notifyNewIntruderDevicesIfNeeded(merged.newIntruderNotifications);
-                setDevices(merged.devices);
-              } else {
-                setDevices(sortDevicesForDisplay(Array.from(historyMap.values())));
-              }
+              setDevices(sortDevicesForDisplay(Array.from(historyMap.values())));
             } catch (e) {
               console.error("[SCAN_LIFECYCLE] Error in scan_finished handler:", e);
             }
@@ -1383,7 +1102,7 @@ export function useNetworkScan() {
       });
       const message =
         err instanceof Error ? err.message : String(err ?? "Scan failed");
-      const isTimeout = message.toLowerCase().includes("timed out");
+      const isTimeout = message?.toLowerCase()?.includes("timed out");
       if (isTimeout) {
         setScanRuntimeError(SCAN_TIMEOUT_MESSAGE);
       }

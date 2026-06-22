@@ -23,9 +23,9 @@ export function DevConsole() {
     eventSource.onmessage = (event) => {
       const text = event.data;
       let level: LogLine["level"] = "info";
-      if (text.includes("[WARN]")) level = "warn";
-      else if (text.includes("[ERROR]")) level = "error";
-      else if (text.includes("[SYSTEM]")) level = "system";
+      if (text?.includes("[WARN]")) level = "warn";
+      else if (text?.includes("[ERROR]")) level = "error";
+      else if (text?.includes("[SYSTEM]")) level = "system";
 
       setLogs((prev) => [
         ...prev.slice(-499),

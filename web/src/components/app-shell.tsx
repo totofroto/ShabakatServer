@@ -95,10 +95,6 @@ export function AppShell() {
     return <Navigate to="/devices" replace />;
   }
 
-  // If there is logic that forces a redirect to a /login route, disable it.
-  // if (!user) {
-  //   return <Navigate to="/login" replace />;
-  // }
 
   const backdropType = settings["backdrop_type"] || "void";
   const backdropImage = settings["backdrop_image"];

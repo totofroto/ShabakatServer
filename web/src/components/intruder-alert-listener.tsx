@@ -1,6 +1,5 @@
 import { listen } from "@/lib/transport";
-import { isTauri } from "@/lib/transport";
-import { vibrate } from "@tauri-apps/plugin-haptics";
+
 import { ShieldAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -11,26 +10,11 @@ export type IntruderAlertPayload = {
   ip: string;
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
+
 
 /** Triple SOS-style pulse: 200 / gap 100 / 200 / gap 100 / 500 ms (plugin API is per-duration, not pattern array). */
 async function tripleSosVibrate(): Promise<void> {
-  if (!isTauri()) {
-    return;
-  }
-  try {
-    await vibrate(200);
-    await sleep(100);
-    await vibrate(200);
-    await sleep(100);
-    await vibrate(500);
-  } catch {
-    /* Haptics unavailable on desktop / simulator */
-  }
+  // Haptics removed
 }
 
 export function IntruderAlertListener() {

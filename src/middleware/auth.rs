@@ -14,20 +14,24 @@ use crate::api::auth::Claims;
 use crate::api::error::ApiError;
 use crate::AppState;
 
-pub fn validate_token(token: &str, secret: &str) -> bool {
+/// Decode and validate a JWT, returning the embedded claims on success.
+/// Returns `None` for any decode/signature/issuer/audience/expiry failure.
+pub fn decode_claims(token: &str, secret: &str) -> Option<Claims> {
     let decoding_key = DecodingKey::from_secret(secret.as_bytes());
     let mut validation = Validation::default();
     validation.set_issuer(&["shabakat-server"]);
     validation.set_audience(&["shabakat-admin"]);
 
-    decode::<Claims>(token, &decoding_key, &validation).is_ok()
+    decode::<Claims>(token, &decoding_key, &validation)
+        .ok()
+        .map(|data| data.claims)
 }
 
 pub async fn auth_middleware(
     jar: CookieJar,
     headers: HeaderMap,
     State(state): State<AppState>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, ApiError> {
     let path = req.uri().path();
@@ -37,8 +41,21 @@ pub async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
-    // Development bypass: SHABAKAT_DISABLE_AUTH=true skips all token validation
+    // Development bypass: SHABAKAT_DISABLE_AUTH=true skips all token validation.
+    // Still inject a synthetic admin identity so handlers that depend on the
+    // validated Claims extension (e.g. /api/auth/me) keep working locally.
     if state.config.disable_auth {
+        req.extensions_mut().insert(Claims {
+            sub: "dev-bypass".to_string(),
+            email: state
+                .config
+                .admin_email
+                .clone()
+                .unwrap_or_else(|| "dev@shabakat.local".to_string()),
+            exp: 0,
+            iss: "shabakat-server".to_string(),
+            aud: "shabakat-admin".to_string(),
+        });
         return Ok(next.run(req).await);
     }
 
@@ -85,7 +102,8 @@ pub async fn auth_middleware(
     }
 
     if let Some(t) = token {
-        if validate_token(&t, &state.config.jwt_secret) {
+        if let Some(claims) = decode_claims(&t, &state.config.jwt_secret) {
+            req.extensions_mut().insert(claims);
             return Ok(next.run(req).await);
         }
         log::warn!("[AUTH_DEBUG] Invalid token or cookie for path: {}", path);

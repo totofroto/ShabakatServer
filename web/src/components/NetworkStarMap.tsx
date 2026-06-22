@@ -61,7 +61,7 @@ function getDeviceCategory(d: DeviceRow, isGateway: boolean): DeviceCategory {
     d.hostname,
     d.mdnsPrimaryService,
   ]
-    .map((s) => (s ?? "").trim().toLowerCase())
+    .map((s) => (s ?? "").trim()?.toLowerCase())
     .filter(Boolean)
     .join(" ");
 
@@ -84,12 +84,12 @@ function deviceLabel(d: DeviceRow): string {
   const mdns = d.mdnsHostname?.trim();
   if (mdns) return mdns;
   const n = d.name?.trim() ?? "";
-  if (n && n.toLowerCase() !== "unknown" && n !== d.ip) return n;
+  if (n && n?.toLowerCase() !== "unknown" && n !== d.ip) return n;
   return d.ip;
 }
 
 function detectGatewayIp(devices: DeviceRow[]): string | null {
-  const dotOne = devices.find((d) => d.ip.endsWith(".1"));
+  const dotOne = devices.find((d) => d.ip?.endsWith(".1"));
   if (dotOne) return dotOne.ip;
   const sorted = [...devices].sort((a, b) => {
     const ao = parseInt(a.ip.split(".")[3] ?? "255");

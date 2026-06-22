@@ -28,7 +28,7 @@ impl MetricsCompactor {
 
         log::info!("[FLIGHT_RECORDER] Compactor scanning for high-frequency records older than 24h...");
 
-        db.execute(move |conn| -> Result<(), String> {
+        let buckets_processed = db.execute(move |conn| -> Result<usize, String> {
             // 1. Identify raw scan history blocks that can be rolled up
             // Group by device and floor the scanned_at timestamp to the nearest hour (3,600,000 ms)
             let query = "
@@ -62,7 +62,7 @@ impl MetricsCompactor {
             }
 
             if consolidated_entries.is_empty() {
-                return Ok(());
+                return Ok(0);
             }
 
             // 2. Commit rolled-up aggregates into the compressed table layer inside an atomic block
@@ -80,25 +80,37 @@ impl MetricsCompactor {
                 ).map_err(|e| e.to_string())?;
             }
 
-            // 3. Purge the highly volatile microscopic raw scan logs older than 24 hours
-            let purged_rows = tx.execute(
-                "DELETE FROM scan_history WHERE scanned_at < ?1",
-                rusqlite::params![cutoff_time_ms],
-            ).map_err(|e| e.to_string())?;
-
             tx.commit().map_err(|e| e.to_string())?;
-
-            log::info!(
-                "[FLIGHT_RECORDER] Compactor successfully processed {} hour-buckets. Purged {} high-frequency raw logs from flash storage.",
-                consolidated_entries.len(),
-                purged_rows
-            );
 
             // Execute an explicit incremental vacuum pass to clean up empty database pages on disk
             let _ = conn.execute("PRAGMA incremental_vacuum(50);", []);
 
-            Ok(())
-        }).await
+            Ok(consolidated_entries.len())
+        }).await?;
+
+        let mut total_purged = 0;
+        loop {
+            let chunk_purged = db.execute(move |conn| -> Result<usize, String> {
+                conn.execute(
+                    "DELETE FROM scan_history WHERE id IN (SELECT id FROM scan_history WHERE scanned_at < ?1 LIMIT 5000)",
+                    rusqlite::params![cutoff_time_ms],
+                ).map_err(|e| e.to_string())
+            }).await?;
+
+            total_purged += chunk_purged;
+            if chunk_purged > 0 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            } else {
+                break;
+            }
+        }
+
+        log::info!(
+            "[FLIGHT_RECORDER] Compactor successfully processed {} hour-buckets. Purged {} high-frequency raw logs from flash storage.",
+            buckets_processed, total_purged
+        );
+
+        Ok(())
     }
 }
 

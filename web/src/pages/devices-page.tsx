@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { invoke, isTauri, transport } from "@/lib/transport";
 import { listen } from "@/lib/transport";
-import { vibrate } from "@tauri-apps/plugin-haptics";
+
 import {
   Fragment,
   useCallback,
@@ -202,11 +202,11 @@ function deviceHostnameIdentified(d: DeviceRow): boolean {
     return true;
   }
   const n = (d.name ?? "").trim();
-  if (!n || n.toLowerCase() === "unknown") {
+  if (!n || n?.toLowerCase() === "unknown") {
     return false;
   }
-  const low = n.toLowerCase();
-  if (low.startsWith("host ")) {
+  const low = n?.toLowerCase();
+  if (low?.startsWith("host ")) {
     return false;
   }
   if (n === d.ip) {
@@ -594,10 +594,10 @@ function DeviceInspector({
     return key;
   };
   const forensicBusy = forensicAutoScanning || isPortScanRunning;
-  const criticalOpen = openPorts.includes(22) || openPorts.includes(3389);
-  const httpCleartextWarn = openPorts.includes(80) && !openPorts.includes(443);
+  const criticalOpen = openPorts?.includes(22) || openPorts?.includes(3389);
+  const httpCleartextWarn = openPorts?.includes(80) && !openPorts?.includes(443);
   const httpsOnlySecure =
-    openPorts.includes(443) && !openPorts.includes(80) && !criticalOpen;
+    openPorts?.includes(443) && !openPorts?.includes(80) && !criticalOpen;
 
   const postureTitle = forensicBusy
     ? t("portGuardian")
@@ -709,12 +709,12 @@ function DeviceInspector({
           <div className="bg-surface rounded-xl overflow-hidden mx-4">
             {openPorts.map((port, i) => {
               const isCritical = port === 22 || port === 3389;
-              const isWarn = port === 80 && !openPorts.includes(443);
+              const isWarn = port === 80 && !openPorts?.includes(443);
               const isSecure =
                 port === 443 &&
-                !openPorts.includes(80) &&
-                !openPorts.includes(22) &&
-                !openPorts.includes(3389);
+                !openPorts?.includes(80) &&
+                !openPorts?.includes(22) &&
+                !openPorts?.includes(3389);
               return (
                 <div key={port}>
                   {i > 0 && <div className="h-px bg-separator ml-4" />}
@@ -935,7 +935,7 @@ export function DevicesPage() {
     const gatewayDevice =
       valid.find((d) => d.ip === apiNetwork?.gateway) ??
       valid.find((d) => d.likelyType === "Router / Gateway") ??
-      valid.find((d) => d.ip.endsWith(".1")) ??
+      valid.find((d) => d.ip?.endsWith(".1")) ??
       null;
     return { gatewayDevice, onlineCount, totalKnown };
   }, [devices, apiNetwork]);
@@ -980,7 +980,7 @@ export function DevicesPage() {
           a.mdnsHostname?.trim() ||
           a.name?.trim() ||
           a.ip
-        ).toLowerCase();
+        )?.toLowerCase();
         const nameB = (
           customNames[b.ip]?.trim() ||
           b.customName?.trim() ||
@@ -990,8 +990,8 @@ export function DevicesPage() {
           b.mdnsHostname?.trim() ||
           b.name?.trim() ||
           b.ip
-        ).toLowerCase();
-        return nameA.localeCompare(nameB);
+        )?.toLowerCase();
+        return (nameA || '').localeCompare(nameB || '');
       });
     } else if (sortOrder === "recent") {
       copy.sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
@@ -1224,7 +1224,7 @@ export function DevicesPage() {
     try {
       if (isTauri()) {
         try {
-          await vibrate(10);
+
         } catch {
           /* Haptics may be unavailable on desktop / some devices. */
         }
@@ -1237,11 +1237,11 @@ export function DevicesPage() {
       setActiveScanMode(null);
       if (isTauri()) {
         try {
-          await vibrate(10);
+
           await new Promise<void>((resolve) => {
             window.setTimeout(resolve, 50);
           });
-          await vibrate(10);
+
         } catch {
           /* Ignore completion haptics failures. */
         }
@@ -1923,8 +1923,8 @@ export function DevicesPage() {
                                   {device.isOnline && (
                                     (device.likelyType?.includes("Router") || 
                                      device.likelyType?.includes("Gateway") || 
-                                     device.ip.endsWith(".1") || 
-                                     device.ip.endsWith(".2"))
+                                     device.ip?.endsWith(".1") || 
+                                     device.ip?.endsWith(".2"))
                                   ) && (
                                     <DeviceLaunchPortalLink 
                                       ip={device.ip} 

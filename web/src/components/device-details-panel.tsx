@@ -129,34 +129,34 @@ export function formatMacForWolIfValid(raw: string): string | null {
 export function isWolEligibleDeviceMac(device: DeviceRow): boolean {
   const m = device.mac?.trim() ?? "";
   if (!m) return false;
-  const low = m.toLowerCase();
+  const low = m?.toLowerCase();
   if (low === "unknown" || low === "mac restricted") return false;
   return formatMacForWolIfValid(m) !== null;
 }
 
 export function pickDeviceIcon(device: DeviceRow): LucideIcon {
-  const type = (device.likelyType ?? device.deviceType ?? "").toLowerCase();
-  const svc = (device.mdnsPrimaryService ?? "").toLowerCase();
+  const type = (device.likelyType ?? device.deviceType ?? "")?.toLowerCase();
+  const svc = (device.mdnsPrimaryService ?? "")?.toLowerCase();
 
-  if (type.includes("router") || type.includes("gateway")) return Router;
-  if (type.includes("nas") || type.includes("synology") || type.includes("qnap")) return HardDrive;
-  if (type.includes("tv") || svc === "googlecast") return Tv;
-  if (type.includes("print") || svc === "printer") return Printer;
-  if (type.includes("mac") || type.includes("apple")) return Monitor;
-  if (type.includes("windows") || type.includes("pc")) return Monitor;
-  if (type.includes("linux") || type.includes("server")) return Terminal;
-  if (type.includes("camera") || type.includes("rtsp")) return Camera;
-  if (type.includes("hue") || type.includes("smart home") || svc === "hap") return Lightbulb;
-  if (type.includes("cast") || type.includes("chromecast")) return Cast;
-  if (type.includes("sonos") || type.includes("audio") || svc === "spotify") return Speaker;
+  if (type?.includes("router") || type?.includes("gateway")) return Router;
+  if (type?.includes("nas") || type?.includes("synology") || type?.includes("qnap")) return HardDrive;
+  if (type?.includes("tv") || svc === "googlecast") return Tv;
+  if (type?.includes("print") || svc === "printer") return Printer;
+  if (type?.includes("mac") || type?.includes("apple")) return Monitor;
+  if (type?.includes("windows") || type?.includes("pc")) return Monitor;
+  if (type?.includes("linux") || type?.includes("server")) return Terminal;
+  if (type?.includes("camera") || type?.includes("rtsp")) return Camera;
+  if (type?.includes("hue") || type?.includes("smart home") || svc === "hap") return Lightbulb;
+  if (type?.includes("cast") || type?.includes("chromecast")) return Cast;
+  if (type?.includes("sonos") || type?.includes("audio") || svc === "spotify") return Speaker;
   if (
-    type.includes("phone") ||
-    type.includes("mobile") ||
-    type.includes("android") ||
-    type.includes("ios")
+    type?.includes("phone") ||
+    type?.includes("mobile") ||
+    type?.includes("android") ||
+    type?.includes("ios")
   )
     return Smartphone;
-  if (type.includes("laptop") || svc === "smb") return Laptop;
+  if (type?.includes("laptop") || svc === "smb") return Laptop;
 
   switch (device.deviceType) {
     case "phone":
@@ -502,7 +502,7 @@ export function DeviceDetailsPanel({
 
     // Validate MAC before sending
     const mac = device.mac?.trim();
-    if (!mac || mac.toLowerCase() === "unknown" || mac.toLowerCase() === "mac restricted") {
+    if (!mac || mac?.toLowerCase() === "unknown" || mac?.toLowerCase() === "mac restricted") {
       notify("Cannot learn a device without a valid MAC address.");
       return;
     }
@@ -539,7 +539,7 @@ export function DeviceDetailsPanel({
     if (isIgnoring) return;
 
     const mac = device.mac?.trim();
-    if (!mac || mac.toLowerCase() === "unknown" || mac.toLowerCase() === "mac restricted") {
+    if (!mac || mac?.toLowerCase() === "unknown" || mac?.toLowerCase() === "mac restricted") {
       notify("Cannot ignore a device without a valid MAC address.");
       return;
     }
@@ -576,7 +576,7 @@ export function DeviceDetailsPanel({
   const Icon = pickDeviceIcon(device);
   const typeLabel = resolveTypeLabel(device, fingerprintLikelyType);
 
-  const isRouter = typeLabel.toLowerCase().includes("router") || typeLabel.toLowerCase().includes("gateway");
+  const isRouter = typeLabel?.toLowerCase()?.includes("router") || typeLabel?.toLowerCase()?.includes("gateway");
 
   const identityRows = [
     device.hostname?.trim() ? { label: "Hostname", value: device.hostname! } : null,
@@ -587,7 +587,7 @@ export function DeviceDetailsPanel({
   ].filter((r): r is { label: string; value: string } => r !== null);
 
   const mdnsServiceLabel = device.mdnsPrimaryService
-    ? (MDNS_SERVICE_LABELS[device.mdnsPrimaryService.toLowerCase()] ??
+    ? (MDNS_SERVICE_LABELS[device.mdnsPrimaryService?.toLowerCase()] ??
       device.mdnsPrimaryService)
     : null;
 

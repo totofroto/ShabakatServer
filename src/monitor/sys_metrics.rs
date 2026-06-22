@@ -24,7 +24,7 @@ pub async fn run_sys_metrics_monitor(state: AppState) {
                 collector = updated_collector;
                 
                 {
-                    let mut t = state.system_telemetry.lock().unwrap();
+                    let mut t = state.system_telemetry.lock().unwrap_or_else(|p| p.into_inner());
                     *t = Some(telemetry.clone());
                 }
 

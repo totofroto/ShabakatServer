@@ -23,7 +23,7 @@ pub async fn list_devices(
 
     if db_rows.is_empty() {
         // Fallback to in-memory devices if DB is empty (e.g. first scan in progress)
-        let mut mem_devices = state.devices.lock().unwrap().clone();
+        let mut mem_devices = state.devices.lock().unwrap_or_else(|p| p.into_inner()).clone();
         if !mem_devices.is_empty() {
             log::info!("[API] DB empty, returning {} devices from memory", mem_devices.len());
             // Map DiscoveredDevice to a structure compatible with the frontend's expected format
